@@ -96,7 +96,7 @@ try {
   check('MediaMTX demarre', started.ok === true, started.message ?? started.status?.state);
 
   // Une adresse nommee comme chez l'utilisateur, pour reproduire le cas.
-  await cdp.evaluate(`window.streamcontrol.streamCreate({ name: 'Osmo', path: 'omso1' })`);
+  await cdp.evaluate(`window.streamcontrol.streamCreate({ name: 'Cam', path: 'cam1' })`);
   await sleep(600);
 
   // --- 1. Adresse inconnue : expliquee, pas une erreur seche --------------
@@ -105,19 +105,19 @@ try {
   check('repond 404', unknown.status === 404, `HTTP ${unknown.status}`);
   check('nomme l adresse demandee', unknown.body.includes('nexistepas'));
   check('explique ou creer une adresse', unknown.body.includes('Nouvelle adresse'));
-  check('liste les adresses existantes', unknown.body.includes('/omso1'));
+  check('liste les adresses existantes', unknown.body.includes('/cam1'));
 
   const bareUnknown = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/nexistepas`);
   check('sans prefixe aussi, 404 explique', bareUnknown.status === 404, `HTTP ${bareUnknown.status}`);
   check('et nomme l adresse', bareUnknown.body.includes('nexistepas'));
 
-  const bareKnown = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/omso1`);
+  const bareKnown = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/cam1`);
   check('une adresse connue sans prefixe redirige', bareKnown.status === 200, `HTTP ${bareKnown.status}`);
   check('vers la page de lecture', bareKnown.body.includes('<video'), 'page de lecture servie');
 
   // --- 2. Page de lecture : chargement, puis attente ---------------------
   console.log('\n--- page de lecture ---');
-  const player = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/omso1`);
+  const player = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/cam1`);
   check('page servie', player.status === 200, `HTTP ${player.status}`);
   check('elle contient une video', player.body.includes('<video'));
   check('elle a un indicateur de chargement', player.body.includes('class="spinner"'));
@@ -132,7 +132,7 @@ try {
   // Un onglet separe fait office de navigateur externe : c'est le chemin
   // qu'emprunte l'utilisateur depuis un autre poste. La creation d'onglet
   // passe par l'endpoint navigateur, pas par la page.
-  await cdp.evaluate(`window.streamcontrol.openStreamWindow(${JSON.stringify((await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'omso1').id)})`);
+  await cdp.evaluate(`window.streamcontrol.openStreamWindow(${JSON.stringify((await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'cam1').id)})`);
   await sleep(9000);
 
   const after = (await cdp.evaluate('window.streamcontrol.getLogs()'))
@@ -151,15 +151,15 @@ try {
   ).length;
   check('aucune session HLS repetee', noStream === 0, `${noStream} ligne(s)`);
 
-  await cdp.evaluate(`window.streamcontrol.closeStreamWindow(${JSON.stringify((await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'omso1').id)})`);
+  await cdp.evaluate(`window.streamcontrol.closeStreamWindow(${JSON.stringify((await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'cam1').id)})`);
 
   // --- 4. Avec une source : la lecture demarre ---------------------------
   console.log('\n--- avec une source ---');
-  const live = (await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'omso1');
+  const live = (await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'cam1');
   ffmpeg = spawn2(live.urls.rtmpIngest);
   await waitFor('publication en ligne', async () => {
     const list = await cdp.evaluate('window.streamcontrol.streamsList()');
-    return list.find((s) => s.path === 'omso1')?.status.publishing === true;
+    return list.find((s) => s.path === 'cam1')?.status.publishing === true;
   }, 25000);
 
   await cdp.evaluate(`window.streamcontrol.openStreamWindow(${JSON.stringify(live.id)})`);
@@ -168,7 +168,7 @@ try {
   for (let i = 0; i < 40 && !viewer2; i += 1) {
     await sleep(300);
     const list = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json();
-    viewer2 = list.find((t) => t.type === 'page' && t.url.includes('/watch/omso1'));
+    viewer2 = list.find((t) => t.type === 'page' && t.url.includes('/watch/cam1'));
   }
   if (!viewer2) throw new Error('fenetre de lecture introuvable');
   const vcdp = createCdp(WebSocket, viewer2.webSocketDebuggerUrl);

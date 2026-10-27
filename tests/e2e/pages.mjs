@@ -76,7 +76,7 @@ try {
   check('les pages repondent', running.status === 200, `HTTP ${running.status}`);
   check('elles listent les adresses', running.body.includes('/live'));
 
-  const unknown = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/omso1282282`);
+  const unknown = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/cam1282282`);
   check('une adresse inconnue repond 404', unknown.status === 404, `HTTP ${unknown.status}`);
 
   // --- 3. La fenetre de lecture passe par la boucle locale ----------------

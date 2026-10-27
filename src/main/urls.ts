@@ -13,7 +13,7 @@ function hostFor(network: NetworkInfo): string {
 
 /**
  * Construit toutes les URL de diffusion a partir de l'IPv4 locale du PC.
- * Les URL d'ingestion sont celles a saisir dans l'application DJI Mimo.
+ * Les URL d'ingestion sont celles a saisir dans la source (camera, logiciel).
  */
 export function buildStreamUrls(settings: AppSettings, network: NetworkInfo): StreamUrls {
   const host = hostFor(network);

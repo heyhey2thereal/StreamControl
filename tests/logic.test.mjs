@@ -201,16 +201,16 @@ test('la grille de scene repartit 1 a 4 flux sans trou', () => {
 test('deux adresses ne peuvent pas porter le meme nom', () => {
   const { StreamRegistry } = require('../dist-electron/main/stream-registry.js');
   const registry = new StreamRegistry();
-  registry.create({ name: 'Osmo', path: 'osmo1' });
+  registry.create({ name: 'Cam', path: 'cam1' });
   // Meme nom, chemin different : refuse.
-  assert.throws(() => registry.create({ name: 'Osmo', path: 'osmo2' }), /nom .* deja utilise/i);
-  // La casse ne compte pas : « osmo » est le meme nom.
-  assert.throws(() => registry.create({ name: 'osmo', path: 'osmo3' }), /nom .* deja utilise/i);
+  assert.throws(() => registry.create({ name: 'Cam', path: 'cam2' }), /nom .* deja utilise/i);
+  // La casse ne compte pas : « cam » est le meme nom.
+  assert.throws(() => registry.create({ name: 'cam', path: 'cam3' }), /nom .* deja utilise/i);
   // Un autre nom passe.
-  const other = registry.create({ name: 'Osmo 2', path: 'osmo2' });
-  assert.equal(other.name, 'Osmo 2');
+  const other = registry.create({ name: 'Cam 2', path: 'cam2' });
+  assert.equal(other.name, 'Cam 2');
   // Le renommage suit la meme regle.
-  assert.throws(() => registry.update(other.id, { name: 'Osmo' }), /nom .* deja utilise/i);
+  assert.throws(() => registry.update(other.id, { name: 'Cam' }), /nom .* deja utilise/i);
   // Se renommer soi-meme reste possible.
-  assert.equal(registry.update(other.id, { name: 'Osmo 2' }).name, 'Osmo 2');
+  assert.equal(registry.update(other.id, { name: 'Cam 2' }).name, 'Cam 2');
 });

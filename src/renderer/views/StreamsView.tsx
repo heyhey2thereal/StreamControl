@@ -9,7 +9,7 @@ const PROTOCOLS: Array<{ id: IngestProtocol; label: string; hint: string; suppor
   {
     id: 'rtmp',
     label: 'RTMP',
-    hint: 'DJI Mimo, OBS, la plupart des cameras et logiciels de diffusion',
+    hint: 'Cameras, telephone, OBS, la plupart des logiciels de diffusion',
     supported: true,
   },
   {

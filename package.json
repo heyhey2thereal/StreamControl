@@ -2,7 +2,7 @@
   "name": "streamcontrol",
   "productName": "StreamControl",
   "version": "1.0.0",
-  "description": "Regie video pour DJI Osmo Pocket 3, MediaMTX et OBS Studio.",
+  "description": "Regie video pour sources RTMP, avec MediaMTX et OBS Studio.",
   "author": {
     "name": "StreamControl",
     "email": "noreply@streamcontrol.local"

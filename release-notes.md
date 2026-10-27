@@ -1,6 +1,6 @@
 # StreamControl v1.0.0
 
-Regie video pour la **DJI Osmo Pocket 3**, **MediaMTX** et **OBS Studio**.
+Regie video pour sources **RTMP**, avec **MediaMTX** et **OBS Studio**.
 Disponible sur **Windows**, **macOS** et **Linux**.
 
 ## Nouveautes

@@ -1,7 +1,8 @@
 # StreamControl
 
 Regie video Windows, macOS et Linux : transformez un PC en serveur de flux pret
-a l'emploi pour la **DJI Osmo Pocket 3**, et pilotez **OBS Studio** par
+a l'emploi pour toute source **RTMP** (camera, telephone, logiciel de
+diffusion), et pilotez **OBS Studio** par
 WebSocket.
 
 Le serveur de flux est **MediaMTX** : il recoit la publication de la camera et
@@ -66,12 +67,17 @@ ouvrable dans un navigateur.
 3. Dans StreamControl, onglet **Parametres > OBS Studio**, saisissez ces valeurs.
 4. Cliquez sur **Connecter** dans l'onglet OBS Studio.
 
-### 3. Camera Osmo Pocket 3
+### 3. Camera ou source RTMP
 
-1. Placez le telephone, le PC et la camera sur le meme reseau local (un partage
-   de connexion mobile fonctionne tres bien).
-2. Ouvrez **DJI Mimo**, connectez la camera, choisissez la diffusion en direct
-   avec une plateforme **RTMP personnalise**.
+StreamControl accepte toute source qui publie en RTMP : camera, telephone,
+logiciel de diffusion, encodeur. L'exemple ci-dessous utilise une **DJI Osmo
+Pocket 3**, dont l'application **DJI Mimo** publie en RTMP.
+
+1. Placez la source et le PC sur le meme reseau local (un partage de
+   connexion mobile fonctionne tres bien).
+2. Dans l'application de la source (par exemple **DJI Mimo** pour l'Osmo
+   Pocket 3), choisissez la diffusion en direct avec une plateforme
+   **RTMP personnalise**.
 3. Collez l'URL RTMP affichee dans l'onglet **URL de diffusion** de
    StreamControl, au format `rtmp://VOTRE_IP:1935/live`.
 4. Verifiez dans l'onglet **Journaux** qu'une publication apparait, puis lancez

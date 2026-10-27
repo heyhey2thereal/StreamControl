@@ -459,7 +459,7 @@ export class WebPagesServer {
    * redirection ici, pour que le client recoive toujours la ressource.
    *
    * `publicPrefix` est le prefixe de notre relais (`/webrtc`). MediaMTX renvoie
-   * des adresses relatives a SA racine, ex. `/osmo1/whep/<secret>` : sans ce
+   * des adresses relatives a SA racine, ex. `/live/whep/<secret>` : sans ce
    * prefixe, le lecteur sortirait de notre chemin et obtiendrait un 404, ce qui
    * interrompt une session pourtant etablie.
    */

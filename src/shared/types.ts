@@ -358,11 +358,11 @@ export interface ServiceActionResult {
 
 /** Appareil qui se connecte ou se deconnecte d'une adresse. */
 export interface DeviceEvent {
-  /** Chemin de l'adresse, ex. "osmo1". */
+  /** Chemin de l'adresse, ex. "live". */
   path: string;
   /** Nom lisible de l'adresse. */
   name: string;
-  /** Logiciel identifie, ex. "DJI Mimo" ou "FFmpeg". */
+  /** Logiciel identifie, ex. "OBS Studio" ou "FFmpeg". */
   device: string;
   /** Adresse de la source, ex. "192.168.1.130:47530". */
   address?: string;

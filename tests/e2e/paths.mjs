@@ -95,7 +95,7 @@ try {
     `window.streamcontrol.saveSettings({ mediamtx: { binaryPath: ${JSON.stringify(MEDIAMTX)}, rtmpPort: ${RTMP_PORT}, hlsPort: ${HLS_PORT}, webrtcPort: ${WEBRTC_PORT}, rtspPort: ${RTSP_PORT}, apiPort: ${API_PORT}, webPagesPort: ${WEB_PAGES_PORT} } })`,
   );
   await sleep(1000);
-  await cdp.evaluate(`window.streamcontrol.streamCreate({ name: 'Osmo', path: 'omso1' })`);
+  await cdp.evaluate(`window.streamcontrol.streamCreate({ name: 'Cam', path: 'cam1' })`);
   await sleep(800);
 
   const started = await cdp.evaluate('window.streamcontrol.startMediamtx()');
@@ -119,28 +119,28 @@ try {
   // --- 2. Aucune adresse inventee ne repond ------------------------------
   console.log('\n--- adresse inventee ---');
   for (const route of ['watch', 'hls', 'webrtc']) {
-    const response = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/${route}/omso1zhdzdzdzd/index.m3u8`);
+    const response = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/${route}/cam1zhdzdzdzd/index.m3u8`);
     check(`/${route} d une adresse inventee renvoie 404`, response.status === 404, `HTTP ${response.status}`);
   }
 
-  const phantom = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/omso1zhdzdzdzd`);
+  const phantom = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/cam1zhdzdzdzd`);
   check('la page dit que l adresse n existe pas', /inconnue|existe pas/i.test(phantom.body));
-  check('elle nomme l adresse demandee', phantom.body.includes('omso1zhdzdzdzd'));
+  check('elle nomme l adresse demandee', phantom.body.includes('cam1zhdzdzdzd'));
   check('elle explique comment en creer une', phantom.body.includes('Nouvelle adresse'));
-  check('elle liste les adresses existantes', phantom.body.includes('/omso1'));
+  check('elle liste les adresses existantes', phantom.body.includes('/cam1'));
   check('ce n est pas une reponse JSON', !phantom.body.trim().startsWith('{'), phantom.body.slice(0, 40));
   check('aucune demande d authentification', !phantom.headers['www-authenticate'], phantom.headers['www-authenticate'] ?? 'aucun');
 
   // --- 3. L'adresse reelle fonctionne ------------------------------------
   console.log('\n--- adresse reelle ---');
-  const live = (await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'omso1');
+  const live = (await cdp.evaluate('window.streamcontrol.streamsList()')).find((s) => s.path === 'cam1');
   check(
     'l URL RTMP est bien formee',
-    /^rtmp:\/\/[0-9.]+:\d+\/omso1$/.test(live.urls.rtmpIngest),
+    /^rtmp:\/\/[0-9.]+:\d+\/cam1$/.test(live.urls.rtmpIngest),
     live.urls.rtmpIngest,
   );
-  check('la page web pointe sur notre serveur', live.urls.watch.includes(`:${WEB_PAGES_PORT}/watch/omso1`), live.urls.watch);
-  check('le HLS passe par notre serveur', live.urls.hls.includes(`:${WEB_PAGES_PORT}/hls/omso1`), live.urls.hls);
+  check('la page web pointe sur notre serveur', live.urls.watch.includes(`:${WEB_PAGES_PORT}/watch/cam1`), live.urls.watch);
+  check('le HLS passe par notre serveur', live.urls.hls.includes(`:${WEB_PAGES_PORT}/hls/cam1`), live.urls.hls);
   check('l API pointe sur notre serveur', live.urls.api.includes(`:${WEB_PAGES_PORT}/api/streams`), live.urls.api);
   // Les URL de lecture passent par la boucle locale : Windows bloque une
   // requete d'un poste vers sa propre adresse de reseau.
@@ -155,13 +155,13 @@ try {
   // « whep » relativement, sans quoi la lecture ne renvoie rien.
   check(
     'l URL WebRTC finit par une barre oblique',
-    live.urls.mediamtxWatch.endsWith('/webrtc/omso1/'),
+    live.urls.mediamtxWatch.endsWith('/webrtc/cam1/'),
     live.urls.mediamtxWatch,
   );
   // La page WebRTC est la notre, jamais celle de MediaMTX : elle attend la
   // source et signale l'erreur exacte, au lieu de boucler sur « stream not
   // found ». Seul le point d'entree WHEP est relaie.
-  const noSlash = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/webrtc/omso1`);
+  const noSlash = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/webrtc/cam1`);
   check('la page WebRTC repond', noSlash.status === 200, `HTTP ${noSlash.status}`);
   check('c est notre page de lecture, pas celle de MediaMTX', noSlash.body.includes('StreamControl'), noSlash.body.slice(0, 60));
   check('elle ne depend pas de reader.js de MediaMTX', !noSlash.body.includes('reader.js'));
@@ -169,7 +169,7 @@ try {
   const whepBad = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/webrtc/whep`);
   check('un whep hors du chemin du flux est refuse', whepBad.status === 404, `HTTP ${whepBad.status}`);
   // La page avec barre oblique se comporte pareil.
-  const withSlash = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/webrtc/omso1/`);
+  const withSlash = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/webrtc/cam1/`);
   check('la page WebRTC avec barre oblique repond aussi', withSlash.status === 200, `HTTP ${withSlash.status}`);
 
   ffmpeg = spawn(FFMPEG, ['-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25',
@@ -181,20 +181,20 @@ try {
 
   const published = await waitFor('le flux passe en direct', async () => {
     const list = await cdp.evaluate('window.streamcontrol.streamsList()');
-    return list.find((s) => s.path === 'omso1')?.status.publishing === true;
+    return list.find((s) => s.path === 'cam1')?.status.publishing === true;
   }, 25000);
   check('la publication est acceptee', published);
 
   // Le HLS relaie par notre serveur doit renvoyer une vraie liste de lecture.
   const playlist = await waitFor('le HLS est servi par notre serveur', async () => {
-    const response = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/hls/omso1/index.m3u8`);
+    const response = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/hls/cam1/index.m3u8`);
     return response.status === 200 && response.body.includes('#EXTM3U');
   }, 25000);
   check('notre serveur sert le HLS', playlist);
 
   // --- 3b. La session WebRTC reste sous notre prefixe --------------------
   // MediaMTX renvoie son adresse de session relative a SA racine
-  // (`/omso1/whep/<secret>`). Le lecteur la suit telle quelle : sans notre
+  // (`/cam1/whep/<secret>`). Le lecteur la suit telle quelle : sans notre
   // prefixe, il sort de notre chemin et obtient un 404, ce qui interrompt une
   // session pourtant etablie (« stream not found »). On verifie que l'adresse
   // renvoyee reste sous `/webrtc`.
@@ -207,7 +207,7 @@ try {
   for (let i = 0; i < 40 && !whepViewer; i += 1) {
     await sleep(400);
     const targets = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json();
-    whepViewer = targets.find((t) => t.type === 'page' && t.url.includes('/watch/omso1'));
+    whepViewer = targets.find((t) => t.type === 'page' && t.url.includes('/watch/cam1'));
   }
   const whepCdp = createCdp(WebSocket, whepViewer.webSocketDebuggerUrl);
   await whepCdp.ready;
@@ -219,7 +219,7 @@ try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     const sdp = pc.localDescription.sdp;
-    const response = await fetch('/webrtc/omso1/whep', {
+    const response = await fetch('/webrtc/cam1/whep', {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
       body: sdp,
@@ -271,7 +271,7 @@ try {
   // Aucune authentification n'est active : une camera ne peut pas etre rejetee
   // avant meme la publication.
   console.log('\n--- publication de la camera ---');
-  for (const suffix of ['omso1/cle', 'omso1?key=abc', 'omso1/macle/42']) {
+  for (const suffix of ['cam1/cle', 'cam1?key=abc', 'cam1/macle/42']) {
     const probe = spawn(FFMPEG, ['-re', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=25',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-pix_fmt', 'yuv420p', '-t', '4',
       '-f', 'flv', `rtmp://127.0.0.1:${RTMP_PORT}/${suffix}`], { stdio: ['ignore', 'ignore', 'pipe'] });

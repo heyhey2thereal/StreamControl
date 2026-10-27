@@ -158,7 +158,7 @@ try {
   const list = await c.evaluate('window.streamcontrol.streamsList()');
   // Deux adresses au moins, pour verifier la grille.
   if (list.length < 2) {
-    await c.evaluate(`window.streamcontrol.streamCreate({ name: 'Osmo 2', path: 'osmo2' })`);
+    await c.evaluate(`window.streamcontrol.streamCreate({ name: 'Cam 2', path: 'cam2' })`);
     await harnessSleep(500);
   }
   const addresses = await c.evaluate('window.streamcontrol.streamsList()');

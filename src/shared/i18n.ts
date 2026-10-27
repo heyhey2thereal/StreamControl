@@ -89,7 +89,7 @@ const fr = {
   'streams.filter': 'Filtrer par nom, chemin ou appareil...',
   'streams.emptyTitle': 'Aucune adresse pour l\'instant',
   'streams.emptyBody':
-    'Une adresse decrit ou votre camera publie et comment le flux est redistribue. Creez-en une pour obtenir l\'URL a saisir dans DJI Mimo ou OBS.',
+    'Une adresse decrit ou votre camera publie et comment le flux est redistribue. Creez-en une pour obtenir l\'URL a saisir dans votre source ou OBS.',
   'streams.emptyAction': 'Creer ma premiere adresse',
   'streams.noMatch': 'Aucune adresse ne correspond a « {filter} ».',
   'streams.showUrls': 'Afficher les adresses a saisir',
@@ -120,7 +120,7 @@ const fr = {
     'Le moteur integre ne gere que RTMP pour le moment. Choisissez RTMP, ou basculez sur MediaMTX dans les Parametres.',
   'form.notYetSupported': 'Pas encore pris en charge',
   'form.source': 'Appareil source (indicatif)',
-  'form.sourcePlaceholder': 'Osmo Pocket 3, telephone, OBS...',
+  'form.sourcePlaceholder': 'Camera, telephone, OBS...',
   'form.sourceHint': 'Une simple note pour vous y retrouver.',
   'form.segment': 'Duree des segments',
   'form.segmentHint': 'Entre 1 et 10 secondes. Plus court = latence plus faible.',
@@ -239,7 +239,6 @@ const fr = {
   'dashboard.previewRotation': 'Flux {index}/{total}',
   'dashboard.previewHintMediamtx': "Demarrez MediaMTX pour activer l'apercu.",
   'dashboard.latency': "Lecture WebRTC sous la seconde, HLS en secours",
-  'dashboard.djiUrls': 'URL a saisir dans DJI Mimo (Osmo Pocket 3)',
   'dashboard.rtmpIngestHint': 'Ingestion camera',
   'dashboard.playError':
     "Lecture impossible : {reason}. Le flux n'est peut-etre pas encore publie par la camera.",
@@ -446,13 +445,13 @@ const fr = {
   'guide.obsStep4Title': 'Publiez vers MediaMTX',
   'guide.obsStep4Body':
     "Dans OBS : Parametres > Diffusion, service Personnalise..., puis collez le serveur et la cle de flux donnes dans l'onglet URL de diffusion.",
-  'guide.cameraTitle': '3. Camera DJI Osmo Pocket 3',
+  'guide.cameraTitle': '3. Camera RTMP',
   'guide.cameraStep1Title': 'Reseau commun',
   'guide.cameraStep1Body':
     'Le telephone, le PC et la camera doivent etre sur le meme reseau local. Le partage de connexion du telephone fonctionne tres bien pour une utilisation nomade.',
-  'guide.cameraStep2Title': 'Mode RTMP dans DJI Mimo',
+  'guide.cameraStep2Title': 'Mode RTMP dans la source',
   'guide.cameraStep2Body':
-    'Ouvrez DJI Mimo, connectez la camera, puis choisissez la diffusion en direct avec une plateforme RTMP personnalise.',
+    'Ouvrez l\'application de la source (par exemple DJI Mimo pour l\'Osmo Pocket 3), puis choisissez la diffusion en direct avec une plateforme RTMP personnalisee.',
   'guide.cameraStep3Title': "Collez l'URL generee",
   'guide.cameraStep3Body':
     "Utilisez l'URL RTMP affichee dans l'onglet URL de diffusion. Elle suit le format rtmp://VOTRE_IP:1935/live.",
@@ -460,7 +459,7 @@ const fr = {
   'guide.cameraStep4Body':
     "L'onglet Journaux doit afficher une ligne de publication cote MediaMTX. L'apercu HLS du tableau de bord montre alors l'image.",
   'guide.rolesTitle': '4. Repartition des roles',
-  'guide.roleCamera': 'Camera (Osmo Pocket 3)',
+  'guide.roleCamera': 'Camera (RTMP)',
   'guide.roleCameraBody': 'Encode et publie le flux en RTMP vers le PC.',
   'guide.roleMediamtxBody': 'Recoit le flux et le redistribue en RTMP, WebRTC, HLS, RTSP et SRT.',
   'guide.roleObsBody':
@@ -483,7 +482,7 @@ const fr = {
   'faq.latencyFix': "A verifier d'abord : rapprochez la camera du routeur, passez en 5 GHz, ou baissez la definition de la camera (1080p -> 720p). L'onglet Flux indique le debit reel et les images perdues.",
   'faq.noVideoQ': 'Pourquoi mon flux RTMP ne passe pas en video ?',
   'faq.noVideoPath': "L'adresse de publication ne correspond a aucune adresse creee dans StreamControl. Creez-la, ou corrigez le chemin dans la camera.",
-  'faq.noVideoUrl': "L'URL RTMP est incomplete ou mal copiee : elle doit finir par le chemin (ex. rtmp://VOTRE_IP:1935/osmo1), sans espace ni retour a la ligne.",
+  'faq.noVideoUrl': "L'URL RTMP est incomplete ou mal copiee : elle doit finir par le chemin (ex. rtmp://VOTRE_IP:1935/live), sans espace ni retour a la ligne.",
   'faq.noVideoFirewall': "Le pare-feu Windows bloque le port 1935. Autorisez StreamControl sur les reseaux prives, puis relancez.",
   'faq.noVideoCodec': "Le codec n'est pas reconnu : la camera doit publier en H.264 (+ AAC pour le son).",
   'faq.noVideoBusy': "Une autre application occupe deja le port RTMP : une seule source peut publier par adresse.",
@@ -726,7 +725,7 @@ const en: Record<TranslationKey, string> = {
   'streams.filter': 'Filter by name, path or device...',
   'streams.emptyTitle': 'No address yet',
   'streams.emptyBody':
-    'An address describes where your camera publishes and how the stream is redistributed. Create one to get the URL to enter in DJI Mimo or OBS.',
+    'An address describes where your camera publishes and how the stream is redistributed. Create one to get the URL to enter in your source or OBS.',
   'streams.emptyAction': 'Create my first address',
   'streams.noMatch': 'No address matches "{filter}".',
   'streams.showUrls': 'Show the addresses to enter',
@@ -756,7 +755,7 @@ const en: Record<TranslationKey, string> = {
     'The built-in engine only supports RTMP for now. Pick RTMP, or switch to MediaMTX in Settings.',
   'form.notYetSupported': 'Not supported yet',
   'form.source': 'Source device (informational)',
-  'form.sourcePlaceholder': 'Osmo Pocket 3, phone, OBS...',
+  'form.sourcePlaceholder': 'Camera, phone, OBS...',
   'form.sourceHint': 'Just a note to help you find it later.',
   'form.segment': 'Segment duration',
   'form.segmentHint': 'Between 1 and 10 seconds. Shorter means lower latency.',
@@ -869,7 +868,6 @@ const en: Record<TranslationKey, string> = {
   'dashboard.previewRotation': 'Stream {index}/{total}',
   'dashboard.previewHintMediamtx': 'Start MediaMTX to enable the preview.',
   'dashboard.latency': 'WebRTC playback under one second, HLS as a fallback',
-  'dashboard.djiUrls': 'URL to enter in DJI Mimo (Osmo Pocket 3)',
   'dashboard.rtmpIngestHint': 'Camera ingest',
   'dashboard.playError':
     'Playback failed: {reason}. The camera may not be publishing yet.',
@@ -1071,13 +1069,13 @@ const en: Record<TranslationKey, string> = {
   'guide.obsStep4Title': 'Publish to MediaMTX',
   'guide.obsStep4Body':
     'In OBS: Settings > Stream, service Custom..., then paste the server and stream key shown in the Stream URLs tab.',
-  'guide.cameraTitle': '3. DJI Osmo Pocket 3 camera',
+  'guide.cameraTitle': '3. RTMP camera',
   'guide.cameraStep1Title': 'Shared network',
   'guide.cameraStep1Body':
     'The phone, the PC and the camera must be on the same local network. The phone hotspot works very well for mobile use.',
-  'guide.cameraStep2Title': 'RTMP mode in DJI Mimo',
+  'guide.cameraStep2Title': 'RTMP mode in the source',
   'guide.cameraStep2Body':
-    'Open DJI Mimo, connect the camera, then choose live streaming with a custom RTMP platform.',
+    'Open the source app (for example DJI Mimo for the Osmo Pocket 3), then choose live streaming with a custom RTMP platform.',
   'guide.cameraStep3Title': 'Paste the generated URL',
   'guide.cameraStep3Body':
     'Use the RTMP URL shown in the Stream URLs tab. It follows the format rtmp://YOUR_IP:1935/live.',
@@ -1085,7 +1083,7 @@ const en: Record<TranslationKey, string> = {
   'guide.cameraStep4Body':
     'The Logs tab must show a publish line on the MediaMTX side. The dashboard HLS preview then shows the picture.',
   'guide.rolesTitle': '4. How the roles are split',
-  'guide.roleCamera': 'Camera (Osmo Pocket 3)',
+  'guide.roleCamera': 'Camera (RTMP)',
   'guide.roleCameraBody': 'Encodes and publishes the stream over RTMP to the PC.',
   'guide.roleMediamtxBody': 'Receives the stream and redistributes it over RTMP, WebRTC, HLS, RTSP and SRT.',
   'guide.roleObsBody':
@@ -1108,7 +1106,7 @@ const en: Record<TranslationKey, string> = {
   'faq.latencyFix': 'Check first: move the camera closer to the router, switch to 5 GHz, or lower the camera resolution (1080p to 720p). The Streams tab shows the real bitrate and lost frames.',
   'faq.noVideoQ': 'Why does my RTMP stream not show as video?',
   'faq.noVideoPath': 'The publish path does not match any stream created in StreamControl. Create it, or fix the path in the camera.',
-  'faq.noVideoUrl': 'The RTMP URL is incomplete or mis-copied: it must end with the path (e.g. rtmp://YOUR_IP:1935/osmo1), with no space or line break.',
+  'faq.noVideoUrl': 'The RTMP URL is incomplete or mis-copied: it must end with the path (e.g. rtmp://YOUR_IP:1935/live), with no space or line break.',
   'faq.noVideoFirewall': 'Windows Firewall blocks port 1935. Allow StreamControl on private networks, then try again.',
   'faq.noVideoCodec': 'Unsupported codec: the camera must publish H.264 (plus AAC for audio).',
   'faq.noVideoBusy': 'Another application already holds the RTMP port: only one source can publish per path.',

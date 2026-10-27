@@ -13,7 +13,7 @@
  * 2. **Aucune authentification.** MediaMTX accepte la publication sur
  *    n'importe quel chemin. Restreindre les chemins ou activer
  *    `authMethod: internal` rejette la connexion de certaines cameras avant
- *    meme la publication, ce qui a casse l'Osmo. Une source qui publie sur une
+ *    meme la publication, ce qui a casse la camera. Une source qui publie sur une
  *    adresse inconnue est signalee dans l'interface, sans etre bloquee.
  *
  * Seul le RTMP est expose : c'est le port que la camera doit joindre.
