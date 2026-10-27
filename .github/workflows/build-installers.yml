@@ -227,7 +227,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: StreamControl ${{ github.ref_name }}
-          draft: false
+          # Brouillon : une version se publie apres verification (relire les
+          # notes, confirmer les installateurs), jamais automatiquement.
+          draft: true
           # Le corps de la note est redige par scripts/changelog.mjs : un vrai
           # journal des modifications classe par nature, et non un lien de
           # comparaison genere automatiquement.
