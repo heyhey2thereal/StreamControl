@@ -244,3 +244,6 @@ licences.
 
 - **OBS Studio** — logiciel libre (GPLv2). Il n'est pas embarque : StreamControl
   s'y connecte s'il est deja installe sur le poste.
+
+
+commit = true
