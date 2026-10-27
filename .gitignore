@@ -1,0 +1,31 @@
+# Dependances
+node_modules/
+
+# Artefacts de build
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+
+# MediaMTX recupere au moment du build (binaire tiers, non versionne)
+vendor/
+
+# Divers
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.local
+
+# Espace de travail des agents (memoire locale, propre a chaque poste)
+.openhands/
+
+# Journal de compilation produit par la CI (joint aux Releases)
+build-log.txt
+
+# Icone ICO, regeneree par "npm run icon"
+build/icon.ico
+
+# Certificats auto-signes generes par MediaMTX
+auto.crt
+auto.key
