@@ -1,0 +1,286 @@
+name: Build installers (Windows, macOS, Linux)
+
+# Declencheurs :
+# - push d'un tag de version (v1.0.0) : construit et publie une Release GitHub
+# - execution manuelle depuis l'onglet Actions : construit un artefact telechargeable
+# - pull request : verification de compilation uniquement
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env: {}
+
+jobs:
+  build:
+    name: Compiler l'installateur (${{ matrix.os }})
+    # Une matrice : chaque systeme construit son propre installeur, avec le
+    # binaire MediaMTX de sa plateforme.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win32
+            script: dist:win
+            artifact: StreamControl-Setup
+            files: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
+          - os: macos-latest
+            platform: darwin
+            script: dist:mac
+            artifact: StreamControl-macOS
+            files: |
+              release/*.dmg
+              release/*.zip
+          - os: ubuntu-latest
+            platform: linux
+            script: dist:linux
+            artifact: StreamControl-Linux
+            files: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # Un journal par plateforme : les artefacts ne doivent pas se recouvrir.
+      STREAMCONTROL_BUILD_LOG: build-log-${{ matrix.platform }}.txt
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+        with:
+          # Historique complet : le journal des modifications compare la version
+          # publiee a la precedente, ce qui exige les tags et les commits.
+          # Un clone superficiel ne les contient pas.
+          fetch-depth: 0
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # Le journal s'ouvre sur l'etat de la machine et de l'outillage : c'est
+      # ce qu'on veut retrouver en premier quand un build echoue plus tard.
+      - name: Ouvrir le journal de compilation
+        shell: bash
+        run: |
+          {
+            echo "StreamControl - journal de compilation"
+            echo "====================================================================="
+            echo "  depot      : ${{ github.repository }}"
+            echo "  reference  : ${{ github.ref }}"
+            echo "  commit     : ${{ github.sha }}"
+            echo "  evenement  : ${{ github.event_name }}"
+            echo "  executeur  : ${{ runner.os }} / ${{ runner.arch }}"
+            echo "  debut      : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo "====================================================================="
+            echo ""
+            echo "--- Outillage disponible ---"
+            node --version 2>&1 | sed 's/^/node    : /'
+            npm --version 2>&1 | sed 's/^/npm     : /'
+            git --version 2>&1 | sed 's/^/git     : /'
+            # PowerShell n'existe que sous Windows : sur macOS et Linux,
+            # l'appel echouait et faisait tomber toute l'etape.
+            if command -v powershell.exe >/dev/null 2>&1; then
+              powershell.exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>&1 | sed 's/^/pwsh    : /'
+            else
+              echo "pwsh    : (non disponible sur cette plateforme)"
+            fi
+            echo ""
+            # Le contenu de la version est consigne des l'ouverture : meme une
+            # correction minuscule laisse une trace exploitable dans le journal.
+            echo "--- Contenu de la version ---"
+            if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+              previous=$(git describe --tags --abbrev=0 HEAD^)
+              echo "  version precedente : $previous"
+              echo ""
+              echo "  Commits inclus :"
+              git log --oneline "$previous..HEAD" | sed 's/^/    /'
+              echo ""
+              echo "  Fichiers modifies (statistiques) :"
+              git diff --stat "$previous..HEAD" | sed 's/^/    /'
+            else
+              echo "  Aucune version precedente : ce journal couvre le premier build."
+            fi
+            echo ""
+          } | tee "$STREAMCONTROL_BUILD_LOG"
+
+      - name: Installer les dependances
+        shell: bash
+        run: ./scripts/ci-log.sh "Installation des dependances (npm ci)" npm ci
+
+      - name: Verifier les types
+        shell: bash
+        run: ./scripts/ci-log.sh "Verification des types TypeScript" npm run typecheck
+
+      - name: Compiler le rendu et le processus principal
+        shell: bash
+        run: ./scripts/ci-log.sh "Compilation du rendu (Vite)" npm run build:vite
+
+      - name: Compiler le processus principal
+        shell: bash
+        run: ./scripts/ci-log.sh "Compilation du processus principal (tsc)" npm run build:electron
+
+      - name: Generer les icones de l'application
+        # L'ICO multi-resolutions n'est pas versionne : il est produit ici, a
+        # partir du generateur, pour rester reproductible.
+        shell: bash
+        run: ./scripts/ci-log.sh "Generation des icones" npm run icon
+
+      - name: Executer les tests unitaires
+        # Verifie la construction des URL, la detection reseau, le journal,
+        # et l'implementation du protocole obs-websocket v5.
+        # Le delai maximal evite qu'un handle residuel ne bloque le runner.
+        timeout-minutes: 5
+        shell: bash
+        run: ./scripts/ci-log.sh "Tests unitaires" npm test
+
+      - name: Recuperer le binaire MediaMTX
+        # Etape non bloquante : si GitHub est injoignable, l'application
+        # proposera le telechargement depuis ses Parametres.
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/ci-log.sh "Recuperation du binaire MediaMTX" node scripts/fetch-mediamtx.mjs --platform ${{ matrix.platform }}
+
+      - name: Installer les dependances d'empaquetage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+
+      - name: Construire l'installateur
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: ./scripts/ci-log.sh "Construction de l'installateur" npm run ${{ matrix.script }}
+
+      - name: Rediger le journal des modifications
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: ./scripts/ci-log.sh "Redaction du journal des modifications" node scripts/changelog.mjs
+
+      - name: Inventorier les fichiers produits
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ""
+            echo "--- Fichiers produits ---"
+            if [ -d release ]; then
+              # Taille, date et nom de chaque fichier, tries par nom.
+              # `-printf` est specifique a GNU find : absent du find de macOS.
+              if find release -maxdepth 1 -type f -printf '' >/dev/null 2>&1; then
+                find release -maxdepth 1 -type f -printf '%10s  %TY-%Tm-%Td %TH:%TM  %f\n' | sort -k4
+              else
+                ls -la release
+              fi
+            else
+              echo "Aucun dossier release : la construction a echoue avant l'empaquetage."
+            fi
+            echo ""
+            echo "--- Empreintes des fichiers produits ---"
+            if [ -d release ]; then
+              find release -maxdepth 1 -type f \( -name '*.exe' -o -name '*.yml' -o -name '*.blockmap' \) \
+                -exec sha256sum {} \; 2>/dev/null || echo "Aucune empreinte disponible."
+            fi
+            echo ""
+            echo "--- Etat du depot a la fin de la construction ---"
+            git status --short 2>&1 | head -40
+            echo ""
+            echo "  fin : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          } | tee -a "$STREAMCONTROL_BUILD_LOG"
+
+      # Le journal est joint meme si une etape precedente a echoue : c'est
+      # precisement dans ce cas qu'il est le plus utile.
+      #
+      # `continue-on-error` : le quota d'artefacts GitHub peut etre sature
+      # (chaque build produit plusieurs centaines de Mo). Un upload refuse ne
+      # doit PAS empecher la publication de la Release, qui est le livrable
+      # utile ; les artefacts, eux, sont redondants avec elle.
+      - name: Publier le journal comme artefact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: ${{ env.STREAMCONTROL_BUILD_LOG }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publier l'installateur comme artefact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: warn
+          retention-days: 15
+
+      - name: Publier la Release GitHub
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: StreamControl ${{ github.ref_name }}
+          draft: false
+          # Le corps de la note est redige par scripts/changelog.mjs : un vrai
+          # journal des modifications classe par nature, et non un lien de
+          # comparaison genere automatiquement.
+          body_path: release-notes.md
+          # Le journal de compilation accompagne toujours la Release : on peut
+          # donc verifier ce qui a ete compile sans acces a la CI.
+          files: |
+            ${{ matrix.files }}
+            ${{ env.STREAMCONTROL_BUILD_LOG }}
+            release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resume dans l'interface Actions
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## StreamControl ${{ github.ref_name }}"
+            echo ""
+            echo "| Element | Valeur |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Journal | \`${{ env.STREAMCONTROL_BUILD_LOG }}\` (artefact \`build-log\`, joint a la Release) |"
+            if [ -f release/latest.yml ]; then
+              echo "| Version | $(grep -m1 '^version:' release/latest.yml | cut -d' ' -f2) |"
+            fi
+            # Un installeur par plateforme : exe, dmg ou AppImage.
+            if [ -d release ]; then
+              for candidate in release/*.exe release/*.dmg release/*.AppImage release/*.deb; do
+                if [ -f "$candidate" ]; then
+                  echo "| Installateur | $(basename "$candidate") ($(wc -c < "$candidate") octets) |"
+                fi
+              done
+            fi
+            echo ""
+            if [ -f release-notes.md ]; then
+              echo "### Journal des modifications"
+              echo ""
+              # Le titre de niveau 1 est deja celui du resume : on l'ecarte.
+              awk '/^## /{found=1} found' release-notes.md | sed -n '1,30p'
+              echo ""
+            fi
+            echo "### Dernieres lignes du journal de compilation"
+            echo ""
+            echo '```'
+            tail -15 "$STREAMCONTROL_BUILD_LOG" 2>/dev/null || echo "Journal indisponible."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
