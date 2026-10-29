@@ -231,3 +231,5 @@ git push origin -f v1.0.0
 
 MIT. MediaMTX et OBS Studio sont des projets tiers distribues sous leurs propres
 licences.
+
+commit = true
