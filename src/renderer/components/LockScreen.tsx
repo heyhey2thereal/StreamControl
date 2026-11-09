@@ -9,22 +9,26 @@ import { useTranslation } from '../hooks/useTranslation';
  * Il masque toute l'interface : le poste sert de serveur de flux, et un
  * passant ne doit pas pouvoir arreter une diffusion ni modifier une adresse.
  *
- * Le mot de passe n'est jamais stocke en clair cote application : seule une
- * empreinte est comparee cote processus principal. Le champ n'apparait qu'apres
- * un clic sur « Vous souhaitez deverrouiller ? », pour que l'ecran reste lisible
- * de loin.
+ * Le mot de passe est demande **a chaque verrouillage**, tout de suite : le
+ * champ est affiche et prend le focus des l'apparition de l'ecran. Aucun mot
+ * de passe n'est conserve en memoire, et l'ecran ne se deverrouille jamais
+ * sans saisie.
+ *
+ * Le mot de passe lui-meme n'est jamais stocke en clair cote application :
+ * seule une empreinte est comparee cote processus principal.
  */
 export function LockScreen({ sc }: { sc: StreamControl }) {
   const { t } = useTranslation();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Le champ est pret a recevoir la saisie : l'operateur n'a pas a cliquer
+  // d'abord. Le mot de passe est donc demande a chaque verrouillage.
   useEffect(() => {
-    if (formOpen) inputRef.current?.focus();
-  }, [formOpen]);
+    inputRef.current?.focus();
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -37,6 +41,9 @@ export function LockScreen({ sc }: { sc: StreamControl }) {
         setError(result.message ?? t('lock.wrong'));
         setPassword('');
         inputRef.current?.focus();
+      } else {
+        // Le mot de passe ne doit pas rester en memoire apres usage.
+        setPassword('');
       }
     } finally {
       setBusy(false);
@@ -50,26 +57,20 @@ export function LockScreen({ sc }: { sc: StreamControl }) {
           <h1 className="lock-title">{t('lock.lockedTitle')}</h1>
           <p className="lock-body">{t('lock.lockedBody')}</p>
 
-          {!formOpen ? (
-            <button type="button" className="lock-cta" onClick={() => setFormOpen(true)}>
-              {t('lock.wantUnlock')}
+          <form className="lock-form" onSubmit={submit}>
+            <input
+              ref={inputRef}
+              className="input mono"
+              type="password"
+              value={password}
+              autoComplete="off"
+              placeholder={t('lock.passwordPlaceholder')}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <button type="submit" className="btn primary" disabled={busy || password.length === 0}>
+              {busy ? t('lock.checking') : t('lock.unlock')}
             </button>
-          ) : (
-            <form className="lock-form" onSubmit={submit}>
-              <input
-                ref={inputRef}
-                className="input mono"
-                type="password"
-                value={password}
-                autoComplete="off"
-                placeholder={t('lock.passwordPlaceholder')}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-              <button type="submit" className="btn primary" disabled={busy || password.length === 0}>
-                {busy ? t('lock.checking') : t('lock.unlock')}
-              </button>
-            </form>
-          )}
+          </form>
 
           {error ? <div className="lock-error">{error}</div> : null}
           {sc.lock.hint ? (

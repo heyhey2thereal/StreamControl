@@ -66,6 +66,12 @@ try {
 
   // --- 3. Le rangement de fichiers a disparu -----------------------------
   console.log('\n--- fichiers ---');
+  // Les reglages sont classes par categorie : on ouvre celle des fichiers.
+  await cdp.evaluate(`(() => {
+    const chip = [...document.querySelectorAll('.chip')].find(x => x.textContent.includes('Fichiers'));
+    if (chip) chip.click();
+  })()`);
+  await sleep(400);
   const settingsText = await cdp.evaluate('document.body.textContent');
   check('plus de bouton de rangement', !settingsText.includes('Ranger les fichiers'));
   check('bouton Ouvrir le dossier present', settingsText.includes('Ouvrir le dossier'));

@@ -196,6 +196,12 @@ function EndpointCard({
               <span className="proto-tag">{protocolLabel}</span>
               {endpoint.streamKey ? <span className="key-tag">{t('streams.keyRequired')}</span> : null}
               {!endpoint.enabled ? <span className="key-tag off">{t('streams.disabled')}</span> : null}
+              {status.recording ? (
+                <span className="rec-tag" title={status.recordingPath ?? ''}>
+                  <span className="rec-dot on" aria-hidden />
+                  REC
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -222,6 +228,27 @@ function EndpointCard({
               t('action.watch')
             )}
           </button>
+          <button
+            type="button"
+            className={`btn small${status.recording ? ' rec-on' : ' ghost'}`}
+            onClick={() => void sc.setStreamRecording(endpoint.id, !status.recording)}
+            title={status.recording ? t('recording.stop') : t('recording.start')}
+          >
+            <span className={`rec-dot${status.recording ? ' on' : ''}`} aria-hidden />
+            {status.recording ? t('recording.stop') : t('recording.start')}
+          </button>
+          {/* Replay : sauvegarde les dernieres secondes de CE flux. Chaque flux
+              a son propre tampon, donc les sauvegardes sont independantes. */}
+          {sc.settings?.replay.enabled && status.publishing ? (
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => void sc.saveReplayFor(endpoint.id)}
+              title={t('replay.saveThis')}
+            >
+              {t('replay.short')}
+            </button>
+          ) : null}
           <button type="button" className="btn small ghost" onClick={onEdit}>
             {t('action.edit')}
           </button>

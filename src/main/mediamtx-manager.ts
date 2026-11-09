@@ -34,6 +34,10 @@ export interface MediamtxPathState {
   remoteAddr?: string;
   /** Logiciel de la source, ex. "FMLE/3.0 (compatible; Lavf61.1.100)". */
   userAgent?: string;
+  /** Vrai quand MediaMTX enregistre ce chemin. */
+  recording?: boolean;
+  /** Modele de chemin d'enregistrement, si l'enregistrement est actif. */
+  recordingPath?: string;
 }
 
 /** Nom lisible d'un logiciel de diffusion, d'apres son user-agent RTMP. */
@@ -92,11 +96,14 @@ export class MediamtxManager extends EventEmitter {
     const port = this.settings.get().mediamtx.apiPort;
 
     try {
-      const [paths, connections] = await Promise.all([
+      const [paths, connections, configPaths] = await Promise.all([
         this.apiGet<{ items?: Array<Record<string, unknown>> }>(port, '/v3/paths/list'),
         // La source connectee n'apparait que dans la liste des connexions :
         // c'est la seule facon de savoir quel appareil publie.
         this.apiGet<{ items?: Array<Record<string, unknown>> }>(port, '/v3/rtmpconns/list'),
+        // La configuration des chemins porte le reglage `record` : c'est elle
+        // qui dit quels flux sont en cours d'enregistrement.
+        this.apiGet<{ items?: Array<Record<string, unknown>> }>(port, '/v3/config/paths/list'),
       ]);
 
       // Une entree par chemin publie : adresse et logiciel de la source.
@@ -108,6 +115,23 @@ export class MediamtxManager extends EventEmitter {
           remoteAddr: typeof entry.remoteAddr === 'string' ? entry.remoteAddr : undefined,
           userAgent: typeof entry.userAgent === 'string' ? entry.userAgent : undefined,
         });
+      }
+
+      // Chemins dont l'enregistrement est actif, et leur dossier.
+      //
+      // Attention : quand le replay instantane est actif, MediaMTX enregistre
+      // lui aussi en continu (c'est le principe du tampon). On distingue les
+      // deux par le dossier : le tampon vit dans « replay-buffer », un vrai
+      // enregistrement dans « recordings ». Sans cette distinction, tous les
+      // flux afficheraient « REC » des que le replay est active.
+      const recording = new Map<string, string>();
+      for (const entry of configPaths?.items ?? []) {
+        if (entry.record !== true) continue;
+        const name = typeof entry.name === 'string' ? entry.name : '';
+        if (!name) continue;
+        const recordPath = typeof entry.recordPath === 'string' ? entry.recordPath : '';
+        if (recordPath.includes('replay-buffer')) continue;
+        recording.set(name, recordPath);
       }
 
       return (paths?.items ?? []).map((item) => {
@@ -126,6 +150,8 @@ export class MediamtxManager extends EventEmitter {
           readers: Array.isArray(item.readers) ? (item.readers as unknown[]).length : 0,
           remoteAddr: publisher?.remoteAddr,
           userAgent: publisher?.userAgent,
+          recording: recording.has(name),
+          recordingPath: recording.get(name),
         };
       });
     } catch {
@@ -152,6 +178,59 @@ export class MediamtxManager extends EventEmitter {
   /** Vrai si le processus MediaMTX tourne et ecoute. */
   get isRunning(): boolean {
     return this.status.state === 'running';
+  }
+
+  /**
+   * Declare ou met a jour un chemin dans MediaMTX, avec son enregistrement.
+   *
+   * MediaMTX ecrit sa configuration en memoire : un chemin ajoute par l'API est
+   * actif immediatement, sans redemarrage. On declare donc chaque flux ici,
+   * avec `record` a la demande, ce qui rend l'enregistrement independant d'un
+   * flux a l'autre.
+   *
+   * @returns true si l'API a accepte l'operation.
+   */
+  async configurePath(
+    streamPath: string,
+    options: {
+      record: boolean;
+      recordPath: string;
+      recordFormat: string;
+      recordSegmentDuration: string;
+      recordDeleteAfter: string;
+    },
+  ): Promise<boolean> {
+    if (this.status.state !== 'running') return false;
+    const name = streamPath.replace(/^\/+|\/+$/g, '');
+    if (!name) return false;
+
+    const body = {
+      source: 'publisher',
+      record: options.record,
+      recordPath: options.recordPath,
+      recordFormat: options.recordFormat,
+      recordSegmentDuration: options.recordSegmentDuration,
+      recordDeleteAfter: options.recordDeleteAfter,
+    };
+
+    // `patch` d'abord : si le chemin existe deja, on met a jour son
+    // enregistrement sans interrompre une publication en cours.
+    const patched = await this.apiCall('PATCH', `/v3/config/paths/patch/${encodeURIComponent(name)}`, body);
+    if (patched) return true;
+
+    // Sinon on le cree.
+    return this.apiCall('POST', `/v3/config/paths/add/${encodeURIComponent(name)}`, body);
+  }
+
+  /** Vrai si MediaMTX enregistre reellement ce chemin. */
+  async isRecording(streamPath: string): Promise<boolean> {
+    const name = streamPath.replace(/^\/+|\/+$/g, '');
+    const port = this.settings.get().mediamtx.apiPort;
+    const config = await this.apiGet<{ record?: boolean }>(
+      port,
+      `/v3/config/paths/get/${encodeURIComponent(name)}`,
+    );
+    return config?.record === true;
   }
 
   /** Appel court a l'API MediaMTX. Retourne null si elle ne repond pas. */

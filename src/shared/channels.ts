@@ -51,6 +51,69 @@ export const CHANNELS = {
   streamStatus: 'streams:status',
   streamOpenWindow: 'streams:open-window',
   streamCloseWindow: 'streams:close-window',
+  /** Active ou desactive l'enregistrement d'un flux, a chaud. */
+  streamSetRecording: 'streams:set-recording',
+  /** Dossier des enregistrements : etat, ouverture, choix. */
+  recordingProbe: 'recording:probe',
+  recordingOpen: 'recording:open',
+  recordingPickDir: 'recording:pick-dir',
+
+  // --- StreamControl Remote -----------------------------------------------
+  /** Demandes d'appairage en attente, pour la pop-up du poste. */
+  remotePending: 'remote:pending',
+  /** Accepter ou refuser une demande d'appairage. */
+  remoteApprove: 'remote:approve',
+  /** Retirer un appareil autorise. */
+  remoteForget: 'remote:forget',
+  /** Definir ou retirer le mot de passe du panneau distant. */
+  remoteSetPassword: 'remote:set-password',
+  eventRemotePairRequest: 'remote:pair-request',
+  /** Notification produite par une macro (action « notifier »). */
+  eventMacroNotice: 'macro:notice',
+  /** Son a jouer, produit par une macro (action « jouer un son »). */
+  eventMacroPlaySound: 'macro:play-sound',
+
+  // --- Automatisation : macros ---------------------------------------------
+  macrosList: 'macros:list',
+  macroCreate: 'macros:create',
+  macroUpdate: 'macros:update',
+  macroDelete: 'macros:delete',
+  macroRun: 'macros:run',
+  macroStop: 'macros:stop',
+  macrosRunning: 'macros:running',
+  /** Dupliquer une macro. */
+  macroDuplicate: 'macros:duplicate',
+  /** Journal d'execution des macros. */
+  macroHistory: 'macros:history',
+  macroHistoryClear: 'macros:history-clear',
+  /** Import / export des macros (JSON). */
+  macroExport: 'macros:export',
+  macroImport: 'macros:import',
+  /** Cree une macro a partir d'un modele pret a l'emploi. */
+  macroFromTemplate: 'macros:from-template',
+  /** Choix d'un fichier ou d'un dossier, pour les champs « fichier » des blocs. */
+  macroPickPath: 'macros:pick-path',
+  /** Lecture d'un fichier de son choisi, pour le jouer dans l'interface. */
+  macroReadSound: 'macros:read-sound',
+
+  // --- Conducteur de spectacle ---------------------------------------------
+  showList: 'show:list',
+  showAdd: 'show:add',
+  showUpdate: 'show:update',
+  showDelete: 'show:delete',
+  showReset: 'show:reset',
+  showNext: 'show:next',
+
+  // --- Surveillance et analyse ---------------------------------------------
+  watchAlerts: 'watch:alerts',
+  watchAcknowledge: 'watch:acknowledge',
+  watchReset: 'watch:reset',
+  diagnosticsList: 'diagnostics:list',
+
+  // --- Replay instantane ---------------------------------------------------
+  replaySave: 'replay:save',
+  replayAvailable: 'replay:available',
+  replayOpenFolder: 'replay:open-folder',
 
   // --- Rangement des fichiers ---------------------------------------------
   storageList: 'storage:list',

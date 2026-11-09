@@ -14,11 +14,23 @@ import type {
   StreamMutationResult,
   StreamUrls,
   UpdateResult,
+  WatchAlert,
 } from '../../shared/types';
 
 export interface Notice {
   id: number;
   kind: 'ok' | 'warn' | 'err';
+  text: string;
+}
+
+/**
+ * Bulle produite par une macro (« notifier »).
+ *
+ * Elle vit dans une liste a part des notifications de l'application : une macro
+ * s'affiche en bas a gauche, pour ne pas se melanger aux messages de l'outil.
+ */
+export interface MacroNotice {
+  id: number;
   text: string;
 }
 
@@ -31,16 +43,28 @@ export interface StreamControlState {
   obs: ObsStatus;
   logs: LogEntry[];
   notices: Notice[];
+  /** Bulles produites par les macros (« notifier »), en bas a gauche. */
+  macroNotices: MacroNotice[];
   /** Adresses de diffusion et leur etat. */
   streams: StreamEndpointView[];
   /** Mise a jour proposee au lancement, si une version est publiee. */
   appUpdate: AppUpdateInfo | null;
+  /**
+   * Vrai quand la fenetre de mise a jour est ouverte.
+   *
+   * Separe de `appUpdate` : « Plus tard » ferme la fenetre mais garde le badge
+   * dans la barre laterale, pour que l'utilisateur puisse y revenir. Seul
+   * « Ne plus me rappeler » retire l'information.
+   */
+  updateDialogOpen: boolean;
   /** Identifiant de la derniere erreur du journal deja vue par l'utilisateur. */
   seenLogErrors: number;
   /** Etat du verrouillage du poste. */
   lock: LockState;
   /** Vrai pendant la visite guidee. */
   onboarding: boolean;
+  /** Alertes de surveillance, les plus recentes en tete. */
+  alerts: WatchAlert[];
 }
 
 const INITIAL_MEDIAMTX: ServiceStatus = { state: 'stopped' };
@@ -68,14 +92,19 @@ export function useStreamControl() {
     obs: INITIAL_OBS,
     logs: [],
     notices: [],
+    macroNotices: [],
     streams: [],
     appUpdate: null,
+    updateDialogOpen: false,
     seenLogErrors: 0,
     lock: { locked: false, hasPassword: false, hint: '' },
+    alerts: [],
     onboarding: false,
   });
 
   const noticeId = useRef(0);
+  /** Identifiants des bulles de macro, pour les retirer une a une. */
+  const macroNoticeId = useRef(0);
   const maxLogLines = state.settings?.ui.maxLogLines ?? 2000;
 
   /**
@@ -110,6 +139,26 @@ export function useStreamControl() {
       notices: previous.notices.filter((notice) => notice.id !== id),
     }));
   }, []);
+
+  /** Retire une bulle de macro, sur un clic. */
+  const dismissMacroNotice = useCallback((id: number) => {
+    setState((previous) => ({
+      ...previous,
+      macroNotices: previous.macroNotices.filter((notice) => notice.id !== id),
+    }));
+  }, []);
+
+  /**
+   * Relit les parametres depuis le processus principal.
+   *
+   * Utile quand une action modifie les parametres sans passer par le
+   * formulaire : definir le mot de passe du Remote, par exemple.
+   */
+  const refreshSettings = useCallback(async () => {
+    const settings = await api.getSettings();
+    setState((previous) => ({ ...previous, settings }));
+    return settings;
+  }, [api]);
 
   const refreshPreflight = useCallback(async (verbose = false) => {
     try {
@@ -179,7 +228,19 @@ export function useStreamControl() {
     });
 
     const unsubscribeSettings = api.on('settings:changed', (settings) => {
-      setState((previous) => ({ ...previous, settings }));
+      setState((previous) => ({
+        ...previous,
+        settings,
+        // Le verrouillage peut venir d'ailleurs que de cette fenetre : le
+        // Remote, par exemple. On le reflete donc depuis les parametres, sinon
+        // un verrouillage a distance n'afficherait jamais l'ecran de
+        // verrouillage.
+        lock: {
+          locked: settings.ui.locked,
+          hasPassword: settings.ui.lockHash.length > 0,
+          hint: settings.ui.lockHint,
+        },
+      }));
     });
 
     const unsubscribePreflight = api.on('preflight:update', (preflight) => {
@@ -201,6 +262,37 @@ export function useStreamControl() {
       notify('warn', tr('note.deviceDisconnected', { device: device.device, name: device.name }));
     });
 
+    // Un son demande par une macro est joue ici : le processus principal n'a
+    // pas de lecteur audio, il transmet le fichier en `data:` URL.
+    const unsubscribeSound = api.on('macro:play-sound', ({ dataUrl, volume }) => {
+      try {
+        const audio = new Audio(dataUrl);
+        // Le volume vient du bloc (0 a 100) ; absent, on joue a plein volume.
+        audio.volume = typeof volume === 'number' ? Math.max(0, Math.min(1, volume / 100)) : 1;
+        void audio.play().catch(() => undefined);
+      } catch {
+        // Un son qui ne peut pas etre joue ne doit pas interrompre la macro.
+      }
+    });
+
+    // Une macro « notifier » remonte ici quand la coche le demande : la bulle
+    // s'affiche en bas a gauche, a part des notifications de l'application.
+    const unsubscribeNotice = api.on('macro:notice', (text) => {
+      const id = ++macroNoticeId.current;
+      setState((previous) => ({
+        ...previous,
+        macroNotices: [...previous.macroNotices, { id, text }],
+      }));
+      // Une bulle de macro disparait plus lentement : elle porte souvent une
+      // consigne, et l'operateur ne regarde pas forcement l'ecran a cet instant.
+      setTimeout(() => {
+        setState((previous) => ({
+          ...previous,
+          macroNotices: previous.macroNotices.filter((notice) => notice.id !== id),
+        }));
+      }, 7000);
+    });
+
     return () => {
       cancelled = true;
       unsubscribeLog();
@@ -211,6 +303,8 @@ export function useStreamControl() {
       unsubscribeStreams();
       unsubscribeDeviceUp();
       unsubscribeDeviceDown();
+      unsubscribeSound();
+      unsubscribeNotice();
     };
   }, [api, maxLogLines, notify, tr]);
 
@@ -230,24 +324,33 @@ export function useStreamControl() {
   /**
    * Verification des mises a jour au demarrage.
    *
-   * On interroge le depot une fois, apres le chargement, pour ne pas ralentir
-   * l'affichage. Le resultat est nul quand aucune version n'est publiee, quand
-   * le jeton manque, ou quand l'utilisateur a ecarte cette version.
+   * On interroge le depot UNE SEULE FOIS, apres le chargement, pour ne pas
+   * ralentir l'affichage. Le resultat est nul quand aucune version n'est
+   * publiee, quand le jeton manque, ou quand l'utilisateur a ecarte cette
+   * version.
+   *
+   * Piege corrige : cet effet ne doit PAS dependre de `state.settings`. Chaque
+   * changement de reglage remplace l'objet `settings` et relancait la
+   * verification : la fenetre « mise a jour disponible » reapparaissait alors
+   * a chaque modification d'un parametre, alors qu'on venait de la fermer.
+   * La langue n'entre pas non plus en compte : les notes viennent du serveur.
    */
+  const updateChecked = useRef(false);
   useEffect(() => {
-    if (!state.ready || !state.settings) return;
+    if (!state.ready || updateChecked.current) return;
+    updateChecked.current = true;
     let cancelled = false;
     void api
       .checkAppUpdate(false)
       .then((appUpdate) => {
         if (cancelled || !appUpdate) return;
-        setState((previous) => ({ ...previous, appUpdate }));
+        setState((previous) => ({ ...previous, appUpdate, updateDialogOpen: true }));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [api, state.ready, state.settings]);
+  }, [api, state.ready]);
 
   /**
    * Verifie les mises a jour a la demande (bouton des Parametres).
@@ -257,7 +360,7 @@ export function useStreamControl() {
     async (force = true): Promise<AppUpdateInfo | null> => {
       try {
         const appUpdate = await api.checkAppUpdate(force);
-        setState((previous) => ({ ...previous, appUpdate }));
+        setState((previous) => ({ ...previous, appUpdate, updateDialogOpen: Boolean(appUpdate) }));
         if (!appUpdate) notify('ok', tr('note.noUpdate'));
         return appUpdate;
       } catch (error) {
@@ -333,9 +436,19 @@ export function useStreamControl() {
     [api],
   );
 
-  /** Ferme la fenetre de mise a jour sans rien retenir. */
+  /**
+   * Ferme la fenetre de mise a jour SANS oublier l'information.
+   *
+   * Le badge reste dans la barre laterale : l'utilisateur peut revenir a la
+   * mise a jour plus tard, dans la meme session.
+   */
   const dismissUpdate = useCallback(() => {
-    setState((previous) => ({ ...previous, appUpdate: null }));
+    setState((previous) => ({ ...previous, updateDialogOpen: false }));
+  }, []);
+
+  /** Rouvre la fenetre de mise a jour depuis le badge de la barre laterale. */
+  const openUpdate = useCallback(() => {
+    setState((previous) => (previous.appUpdate ? { ...previous, updateDialogOpen: true } : previous));
   }, []);
 
   /** Ecarte une version : elle ne sera plus proposee. */
@@ -347,7 +460,7 @@ export function useStreamControl() {
     }
     try {
       const settings = await api.saveSettings({ ui: { dismissedUpdateVersion: version } } as Partial<AppSettings>);
-      setState((previous) => ({ ...previous, settings, appUpdate: null }));
+      setState((previous) => ({ ...previous, settings, appUpdate: null, updateDialogOpen: false }));
       notify('ok', tr('note.updateIgnored', { version }));
     } catch (error) {
       notify('err', error instanceof Error ? error.message : String(error));
@@ -459,6 +572,24 @@ export function useStreamControl() {
     },
     [api, notify, tr],
   );
+
+  /**
+   * Demarre la diffusion SI elle n'est pas deja active.
+   *
+   * Ne jamais utiliser `obsToggle('streaming')` pour « mettre en direct » : la
+   * bascule coupe la diffusion quand elle tourne deja. C'est ce qui faisait
+   * s'arreter un direct en appliquant une scene.
+   */
+  const obsStartStreaming = useCallback(async () => {
+    try {
+      if (state.obs.streaming) return;
+      const obs = await api.obsToggleStreaming();
+      setState((previous) => ({ ...previous, obs }));
+      if (obs.error) notify('err', obs.error);
+    } catch (error) {
+      notify('err', error instanceof Error ? error.message : String(error));
+    }
+  }, [api, notify, state.obs.streaming]);
 
   /** Applique un statut OBS renvoye par une action, et signale une erreur. */
   const applyObsStatus = useCallback(
@@ -597,6 +728,34 @@ export function useStreamControl() {
     [api, notify, tr],
   );
 
+  /**
+   * Active ou desactive l'enregistrement d'un flux.
+   *
+   * Passe par un canal dedie : l'enregistrement est une action metier a part,
+   * et le message de confirmation nomme le flux et l'etat.
+   */
+  const setStreamRecording = useCallback(
+    async (id: string, record: boolean): Promise<StreamMutationResult> => {
+      const name = state.streams.find((entry) => entry.id === id)?.name ?? '';
+      try {
+        const result = await api.streamSetRecording(id, record);
+        if (result.ok) {
+          notify('ok', record ? tr('note.recordingOn', { name }) : tr('note.recordingOff', { name }));
+          const streams = await api.streamsList();
+          setState((previous) => ({ ...previous, streams }));
+        } else {
+          notify('err', result.message ?? tr('note.recordingFailed'));
+        }
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        notify('err', message);
+        return { ok: false, message };
+      }
+    },
+    [api, notify, tr, state.streams],
+  );
+
   const deleteStream = useCallback(
     async (id: string): Promise<StreamMutationResult> => {
       try {
@@ -651,6 +810,102 @@ export function useStreamControl() {
     [api, notify, tr],
   );
 
+  /** Ouvre le dossier des enregistrements (cree au besoin). */
+  const openRecording = useCallback(async () => {
+    try {
+      const result = await api.recordingOpen();
+      if (!result.ok) notify('err', result.message);
+      return result;
+    } catch (error) {
+      notify('err', error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }, [api, notify, tr]);
+
+  /** Ouvre le dossier des replays (cree au besoin). */
+  const openReplayFolder = useCallback(async () => {
+    try {
+      const result = await api.replayOpenFolder();
+      if (!result.ok) notify('err', result.message);
+      return result;
+    } catch (error) {
+      notify('err', error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }, [api, notify, tr]);
+
+  /**
+   * Sauvegarde le replay du dernier flux en direct.
+   *
+   * Sans flux actif, il n'y a rien a sauvegarder : on le dit, plutot que de
+   * laisser croire a une erreur.
+   */
+  const saveReplayLatest = useCallback(async () => {
+    const live = state.streams.filter((stream) => stream.status.publishing);
+    const target = live[0];
+    if (!target) {
+      notify('warn', tr('replay.noLive'));
+      return null;
+    }
+    try {
+      const file = await api.replaySave(target.id);
+      if (!file) {
+        notify('warn', tr('replay.empty'));
+        return null;
+      }
+      notify('ok', tr('replay.saved', { name: target.name }));
+      return file;
+    } catch (error) {
+      notify('err', error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }, [api, notify, tr, state.streams]);
+
+  /**
+   * Sauvegarde le replay d'un flux precis.
+   *
+   * Chaque flux a son propre tampon : on peut donc sauvegarder une camera
+   * sans toucher aux autres, ou les prendre toutes d'un coup.
+   */
+  const saveReplayFor = useCallback(
+    async (id: string): Promise<string | null> => {
+      const target = state.streams.find((stream) => stream.id === id);
+      try {
+        const file = await api.replaySave(id);
+        if (!file) {
+          notify('warn', tr('replay.empty'));
+          return null;
+        }
+        notify('ok', tr('replay.saved', { name: target?.name ?? '' }));
+        return file;
+      } catch (error) {
+        notify('err', error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [api, notify, tr, state.streams],
+  );
+
+  /** Sauvegarde le replay de tous les flux en direct, en un clic. */
+  const saveReplayAll = useCallback(async (): Promise<number> => {
+    const live = state.streams.filter((stream) => stream.status.publishing);
+    if (live.length === 0) {
+      notify('warn', tr('replay.noLive'));
+      return 0;
+    }
+    let saved = 0;
+    for (const stream of live) {
+      try {
+        if (await api.replaySave(stream.id)) saved += 1;
+      } catch {
+        // Un flux en echec ne doit pas empecher les autres.
+      }
+    }
+    if (saved > 0) notify('ok', tr('replay.savedCount', { count: saved }));
+    else notify('warn', tr('replay.empty'));
+    return saved;
+  }, [api, notify, tr, state.streams]);
+
   const clearLogs = useCallback(async () => {
     await api.clearLogs();
     setState((previous) => ({ ...previous, logs: [] }));
@@ -693,6 +948,21 @@ export function useStreamControl() {
     void api.getPaths().then(setPaths).catch(() => setPaths(null));
   }, [api, state.settings?.files.storagePath]);
 
+  /**
+   * Alertes de surveillance, relues regulierement.
+   *
+   * Elles apparaissent dans le bandeau d'etat : un probleme ne doit pas rester
+   * invisible parce que l'operateur regarde un autre onglet.
+   */
+  useEffect(() => {
+    if (!state.ready) return;
+    const load = () =>
+      void api.watchAlerts().then((alerts) => setState((previous) => ({ ...previous, alerts }))).catch(() => undefined);
+    load();
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
+  }, [api, state.ready]);
+
   const settingsPath = paths?.settingsFile ?? '';
 
   return useMemo(
@@ -702,6 +972,12 @@ export function useStreamControl() {
       settingsPath,
       paths,
       openStorage,
+      openRecording,
+      openReplayFolder,
+      saveReplayLatest,
+      saveReplayFor,
+      saveReplayAll,
+      refreshSettings,
       refreshPreflight,
       saveSettings,
       resetSettings,
@@ -713,6 +989,7 @@ export function useStreamControl() {
       obsDisconnect,
       obsSetScene,
       obsToggle,
+      obsStartStreaming,
       obsCreateScene,
       obsSetStudioMode,
       obsSetPreviewScene,
@@ -722,6 +999,7 @@ export function useStreamControl() {
       downloadMediamtx,
       createStream,
       updateStream,
+      setStreamRecording,
       deleteStream,
       openStreamWindow,
       closeStreamWindow,
@@ -730,8 +1008,10 @@ export function useStreamControl() {
       openExternal,
       notify,
       dismissNotice,
+      dismissMacroNotice,
       checkUpdate,
       dismissUpdate,
+      openUpdate,
       ignoreUpdate,
       acknowledgeLogs,
       startOnboarding,
@@ -748,6 +1028,12 @@ export function useStreamControl() {
       settingsPath,
       paths,
       openStorage,
+      openRecording,
+      openReplayFolder,
+      saveReplayLatest,
+      saveReplayFor,
+      saveReplayAll,
+      refreshSettings,
       refreshPreflight,
       saveSettings,
       resetSettings,
@@ -757,6 +1043,7 @@ export function useStreamControl() {
       obsDisconnect,
       obsSetScene,
       obsToggle,
+      obsStartStreaming,
       obsSetStudioMode,
       obsSetPreviewScene,
       obsTransition,
@@ -765,6 +1052,7 @@ export function useStreamControl() {
       downloadMediamtx,
       createStream,
       updateStream,
+      setStreamRecording,
       deleteStream,
       openStreamWindow,
       closeStreamWindow,
@@ -773,8 +1061,10 @@ export function useStreamControl() {
       openExternal,
       notify,
       dismissNotice,
+      dismissMacroNotice,
       checkUpdate,
       dismissUpdate,
+      openUpdate,
       ignoreUpdate,
       acknowledgeLogs,
       startOnboarding,

@@ -16,6 +16,12 @@ import type { Logger } from './logger';
 import type { StreamController } from './stream-controller';
 import { createTranslator, DEFAULT_LANGUAGE, isLanguage } from '../shared/i18n';
 import { renderPlayerPage, renderUnknownPathPage } from './player-page';
+import { renderRemoteDisabled, renderRemotePage } from './remote-page';
+import { renderRemoteDesktopPage } from './remote-desktop-page';
+import type { RemoteManager } from './remote';
+import { describeDeviceKind } from './remote';
+import type { RemotePermissions } from '../shared/types';
+import type { ObsController } from './obs-controller';
 
 export interface WebPagesOptions {
   logger: Logger;
@@ -29,6 +35,26 @@ export interface WebPagesOptions {
   /** Port du serveur de pages, tel qu'il ecoute vraiment. */
   getActivePort: () => number;
   appVersion: string;
+  /** Gestionnaire du panneau distant. Absent = Remote indisponible. */
+  remote?: RemoteManager;
+  /** OBS, pour les transitions demandees depuis le telephone. */
+  obs?: ObsController;
+  /** Actions du poste declenchables a distance (verrouiller, redemarrer...). */
+  remoteActions?: RemoteActions;
+}
+
+/** Actions du poste que le panneau distant peut declencher. */
+export interface RemoteActions {
+  /** Verrouille la session de travail du poste. */
+  lockWorkstation: () => Promise<void>;
+  /** Active ou arrete l'enregistrement d'un flux. */
+  setStreamRecording: (id: string, record: boolean) => Promise<{ ok: boolean; message?: string }>;
+  /** Redemarre MediaMTX. */
+  restartMediamtx: () => Promise<{ ok: boolean; message?: string }>;
+  /** Lance une macro depuis le telephone. */
+  runMacro: (id: string) => Promise<{ ok: boolean; executed: number; message?: string }>;
+  /** Macros actives, proposees comme boutons sur le telephone. */
+  listMacros?: () => Array<{ id: string; name: string }>;
 }
 
 /** Echappe le texte insere dans le HTML. */
@@ -112,6 +138,9 @@ export class WebPagesServer {
    */
   private readonly getActivePort: () => number;
   private readonly appVersion: string;
+  private readonly remote?: RemoteManager;
+  private readonly obs?: ObsController;
+  private readonly remoteActions?: RemoteActions;
 
   constructor(options: WebPagesOptions) {
     this.logger = options.logger;
@@ -121,6 +150,9 @@ export class WebPagesServer {
     this.getMediamtxPorts = options.getMediamtxPorts;
     this.getActivePort = options.getActivePort;
     this.appVersion = options.appVersion;
+    this.remote = options.remote;
+    this.obs = options.obs;
+    this.remoteActions = options.remoteActions;
   }
 
   /**
@@ -212,12 +244,6 @@ export class WebPagesServer {
   private handle(request: http.IncomingMessage, response: ServerResponse): void {
     response.setHeader('Cache-Control', 'no-store');
 
-    // Tout le service depend de MediaMTX : sans lui, il n'y a rien a servir.
-    if (!this.isMediamtxRunning()) {
-      this.sendHtml(response, 503, renderStoppedPage(this.displayPort(), this.getLanguage()));
-      return;
-    }
-
     let url: URL;
     try {
       url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
@@ -227,6 +253,21 @@ export class WebPagesServer {
     }
 
     const segments = url.pathname.split('/').filter(Boolean);
+
+    // --- StreamControl Remote ---------------------------------------------
+    // Le panneau distant est traite AVANT le controle de MediaMTX : il doit
+    // repondre meme quand MediaMTX est arrete, sinon on ne peut pas s'en servir
+    // pour le redemarrer. C'est tout l'interet d'un panneau de controle.
+    if (segments[0] === 'remote') {
+      void this.handleRemote(request, response, segments);
+      return;
+    }
+
+    // Tout le reste depend de MediaMTX : sans lui, il n'y a rien a servir.
+    if (!this.isMediamtxRunning()) {
+      this.sendHtml(response, 503, renderStoppedPage(this.displayPort(), this.getLanguage()));
+      return;
+    }
 
     if (url.pathname === '/api/streams') {
       this.sendJson(response, 200, {
@@ -446,6 +487,221 @@ export class WebPagesServer {
     // la session de lecture par `?session=...`, et les segments en dependent.
     const upstreamPath = url.pathname.replace(/^\/hls/, '') + (url.search ?? '');
     this.proxyTo(this.getMediamtxPorts().hlsPort, upstreamPath, response, request);
+  }
+
+  /**
+   * Routes du panneau distant.
+   *
+   * `/remote` sert la page mobile ; `/remote/pair` cree une demande d'acces ;
+   * `/remote/pair/<id>` donne son etat ; `/remote/state` lit l'etat courant ;
+   * `/remote/scene` et `/remote/action` executent une commande OBS. Toutes les
+   * routes sauf l'appairage exigent un jeton d'appareil valide.
+   */
+  private async handleRemote(
+    request: http.IncomingMessage,
+    response: ServerResponse,
+    segments: string[],
+  ): Promise<void> {
+    if (!this.remote || !this.remote.enabled) {
+      this.sendHtml(response, 200, renderRemoteDisabled(this.getLanguage()));
+      return;
+    }
+
+    // La page elle-meme est servie sans jeton : c'est elle qui declenche
+    // l'appairage. Les donnees, elles, exigent un jeton.
+    if (segments.length === 1) {
+      // La nature de l'appareil vient de son navigateur : le telephone recoit
+      // la version mobile, l'ordinateur la vue complete des flux.
+      const kind = describeDeviceKind(request.headers['user-agent']);
+      const permissions = this.remote.permissionsFor(kind);
+      const options = {
+        language: this.getLanguage(),
+        requiresPassword: this.remote.hasPassword,
+        permissions,
+      };
+      this.sendHtml(response, 200, kind === 'desktop' ? renderRemoteDesktopPage(options) : renderRemotePage(options));
+      return;
+    }
+
+    // --- Appairage --------------------------------------------------------
+    if (segments[1] === 'pair') {
+      // Nouvelle demande : cree et affiche la pop-up sur le poste.
+      if (segments.length === 2 && request.method === 'POST') {
+        const body = await this.readJsonBody(request);
+        // Le mot de passe d'acces est exige AVANT de deranger le poste.
+        if (this.remote.hasPassword && !this.remote.checkPassword(String(body.password ?? ''))) {
+          this.sendJson(response, 403, { error: 'password' });
+          return;
+        }
+        const address = request.socket.remoteAddress ?? '';
+        const pair = this.remote.requestPair(request.headers['user-agent'], address);
+        this.sendJson(response, 200, { id: pair.id });
+        return;
+      }
+      // Etat d'une demande : l'appareil interroge jusqu'a la decision.
+      if (segments.length === 3 && request.method === 'GET') {
+        this.sendJson(response, 200, this.remote.status(segments[2]));
+        return;
+      }
+      this.sendJson(response, 404, { error: 'unknown' });
+      return;
+    }
+
+    // --- Tout le reste exige un jeton ------------------------------------
+    const device = this.remote.verify(request.headers['x-remote-token'] as string | undefined);
+    if (!device) {
+      this.sendJson(response, 401, { error: 'unauthorized' });
+      return;
+    }
+    this.remote.touch(device.token);
+
+    // Les autorisations sont relues a chaque requete : une case decochee dans
+    // l'interface du poste prend effet immediatement, sans reappairage. Masquer
+    // une section ne suffit pas, le serveur doit la refuser aussi.
+    const permissions = this.remote.permissionsFor(device.kind ?? 'desktop');
+
+    if (segments[1] === 'state' && request.method === 'GET') {
+      this.sendJson(response, 200, this.remoteState(permissions));
+      return;
+    }
+
+    const body = request.method === 'POST' ? await this.readJsonBody(request) : {};
+
+    if (segments[1] === 'scene' && request.method === 'POST') {
+      if (!permissions.scenes) {
+        this.sendJson(response, 403, { ok: false, message: 'Action non autorisee.' });
+        return;
+      }
+      const scene = typeof body.scene === 'string' ? body.scene : '';
+      if (!this.obs) {
+        this.sendJson(response, 503, { ok: false, message: 'OBS indisponible.' });
+        return;
+      }
+      const status = await this.obs.setScene(scene);
+      this.sendJson(response, 200, { ok: true, obs: status });
+      return;
+    }
+
+    if (segments[1] === 'action' && request.method === 'POST') {
+      const action = typeof body.action === 'string' ? body.action : '';
+      const result = await this.runRemoteAction(action, body, permissions);
+      this.sendJson(response, result.status, result.payload);
+      return;
+    }
+
+    this.sendJson(response, 404, { error: 'unknown' });
+  }
+
+  /**
+   * Execute une action demandee depuis le telephone ou l'ordinateur.
+   *
+   * Toutes ces actions passent par les controleurs du poste : l'appareil ne
+   * fait que les declencher, il n'a aucun acces direct au systeme. Chaque
+   * action verifie l'autorisation correspondante.
+   */
+  private async runRemoteAction(
+    action: string,
+    body: Record<string, unknown>,
+    permissions: RemotePermissions,
+  ): Promise<{ status: number; payload: unknown }> {
+    const denied = { status: 403, payload: { ok: false, message: 'Action non autorisee.' } };
+
+    // Actions OBS.
+    if (action === 'transition' || action === 'stream' || action === 'record') {
+      if (!permissions.scenes) return denied;
+      if (!this.obs) return { status: 503, payload: { ok: false, message: 'OBS indisponible.' } };
+      let status;
+      if (action === 'transition') status = await this.obs.transition();
+      else if (action === 'stream') status = await this.obs.toggleStreaming();
+      else status = await this.obs.toggleRecording();
+      return { status: 200, payload: { ok: true, obs: status } };
+    }
+
+    // Actions du poste, fournies par StreamControl.
+    const actions = this.remoteActions;
+    if (!actions) return { status: 503, payload: { ok: false, message: 'Action indisponible.' } };
+
+    switch (action) {
+      case 'lock': {
+        if (!permissions.controls) return denied;
+        await actions.lockWorkstation();
+        return { status: 200, payload: { ok: true } };
+      }
+      case 'recording': {
+        if (!permissions.recording) return denied;
+        const id = typeof body.id === 'string' ? body.id : '';
+        const record = body.record === true;
+        const result = await actions.setStreamRecording(id, record);
+        return { status: 200, payload: { ok: result.ok, message: result.message } };
+      }
+      case 'restart-mediamtx': {
+        if (!permissions.controls) return denied;
+        const result = await actions.restartMediamtx();
+        return { status: 200, payload: { ok: result.ok, message: result.message } };
+      }
+      case 'macro': {
+        if (!permissions.macros) return denied;
+        // Une macro lancee depuis l'appareil : c'est l'action la plus utile
+        // du panneau distant, puisqu'elle peut tout enchainer.
+        const id = typeof body.id === 'string' ? body.id : '';
+        const result = await actions.runMacro(id);
+        return { status: 200, payload: { ok: result.ok, executed: result.executed, message: result.message } };
+      }
+      default:
+        return { status: 400, payload: { ok: false, message: 'Action inconnue.' } };
+    }
+  }
+
+  /** Etat consolide pour l'appareil : flux, OBS, services. */
+  private remoteState(permissions: RemotePermissions): unknown {
+    return {
+      streams: this.streams.list().map((endpoint) => ({
+        id: endpoint.id,
+        name: endpoint.name,
+        path: endpoint.path,
+        publishing: endpoint.status.publishing,
+        recording: endpoint.status.recording,
+        bitrateKbps: endpoint.status.bitrateKbps,
+        viewers: endpoint.status.viewers,
+        videoWidth: endpoint.status.videoWidth,
+        videoHeight: endpoint.status.videoHeight,
+        hls: `/hls/${endpoint.path}/index.m3u8`,
+      })),
+      obs: this.obs?.getStatus() ?? null,
+      mediamtxRunning: this.isMediamtxRunning(),
+      // Les macros actives, pour les proposer comme boutons sur l'appareil.
+      macros: this.remoteActions?.listMacros?.() ?? [],
+      permissions,
+    };
+  }
+
+  /** Lit un corps JSON, avec une borne de taille. */
+  private readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
+    return new Promise((resolve) => {
+      let raw = '';
+      let tooLarge = false;
+      request.on('data', (chunk) => {
+        if (tooLarge) return;
+        raw += chunk;
+        if (raw.length > 64 * 1024) {
+          tooLarge = true;
+          raw = '';
+        }
+      });
+      request.on('end', () => {
+        if (tooLarge || !raw) {
+          resolve({});
+          return;
+        }
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          resolve(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {});
+        } catch {
+          resolve({});
+        }
+      });
+      request.on('error', () => resolve({}));
+    });
   }
 
   /**

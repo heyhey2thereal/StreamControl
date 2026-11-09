@@ -110,7 +110,11 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
     width:100%; height:100%; max-width:none; background:#000;
     border:0; border-radius:0; overflow:hidden; position:relative;
   }
-  video { width:100%; height:100%; display:block; background:#000; }
+  /* object-fit: contain est indispensable : sans lui, une camera dont l'image
+     n'est pas exactement au rapport du cadre (4/3, 16/10...) est ETIREE pour le
+     remplir, donc deformee. C'est ce qui « ecrasait » le format, en particulier
+     dans la grille OBS ou chaque flux occupe une cellule. */
+  video { width:100%; height:100%; display:block; background:#000; object-fit:contain; }
   .overlay {
     position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
     align-items:center; justify-content:center; text-align:center; padding:24px;

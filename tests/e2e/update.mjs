@@ -24,15 +24,15 @@ const { check, summary } = createChecker();
 
 // --- Serveur de publication simule ---------------------------------------
 const RELEASE = {
-  tag_name: 'v1.0.0',
-  name: 'StreamControl v1.0.0',
+  tag_name: 'v2.0.0',
+  name: 'StreamControl v2.0.0',
   html_url: 'http://127.0.0.1:9361/release-page',
   published_at: '2026-10-26T00:00:00Z',
   body: '## Corrections\n\n- Le lecteur WebRTC fonctionne.\n- `Latence` corrigee.',
   assets: [
     {
-      name: 'StreamControl-Setup-1.0.0.exe',
-      browser_download_url: 'http://127.0.0.1:9361/StreamControl-Setup-1.0.0.exe',
+      name: 'StreamControl-Setup-2.0.0.exe',
+      browser_download_url: 'http://127.0.0.1:9361/StreamControl-Setup-2.0.0.exe',
     },
   ],
 };
@@ -43,8 +43,8 @@ const releaseServer = http.createServer((request, response) => {
   const url = request.url ?? '/';
   if (url.startsWith('/repos/')) {
     releaseCalls += 1;
-    // Le depot est public : l'API repond sans jeton. On note la presence d'un
-    // en-tete d'authentification pour verifier qu'aucun jeton n'est exige.
+    // Un depot public repond sans jeton. On note la presence d'un en-tete
+    // d'authentification pour verifier qu'aucun jeton n'est exige.
     if (request.headers.authorization) authenticatedCalls += 1;
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify(RELEASE));
@@ -67,7 +67,7 @@ const app = startApp({
   env: {
     STREAMCONTROL_UPDATE_API: `http://127.0.0.1:${API_PORT}`,
     STREAMCONTROL_UPDATE_CONFIG: configPath,
-    // Aucun jeton : le depot public doit repondre sans authentification.
+    // Aucun jeton : la verification doit fonctionner sans authentification.
     STREAMCONTROL_GITHUB_TOKEN: '',
     GITHUB_TOKEN: '',
   },
@@ -87,7 +87,7 @@ try {
     20_000,
   );
   check('la fenetre de mise a jour apparait au lancement', appeared);
-  check('la version publiee est annoncee', (await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""')).includes('v1.0.0'));
+  check('la version publiee est annoncee', (await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""')).includes('v2.0.0'));
   const text = await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""');
   check('les notes de version sont affichees', text.includes('Le lecteur WebRTC fonctionne'), text.slice(0, 60));
   check('les trois reponses sont proposees', await cdp.evaluate(`(() => {
@@ -108,8 +108,8 @@ try {
   // --- 3. Verification manuelle : la fenetre revient ---------------------
   console.log('\n--- verification manuelle ---');
   const manual = await cdp.evaluate('window.streamcontrol.checkAppUpdate(true)');
-  check('checkAppUpdate renvoie la version publiee', manual?.version === 'v1.0.0', manual?.version);
-  check('la version installee est connue', manual?.currentVersion === '1.0.0', manual?.currentVersion);
+  check('checkAppUpdate renvoie la version publiee', manual?.version === 'v2.0.0', manual?.version);
+  check('la version installee est connue', manual?.currentVersion === '2.0.0', manual?.currentVersion);
   check(
     'les notes sont en texte simple (sans balisage Markdown)',
     typeof manual?.notes === 'string' && !manual.notes.includes('##') && manual.notes.includes('Le lecteur WebRTC fonctionne'),
@@ -117,7 +117,7 @@ try {
   );
   check(
     "l'adresse de l'installeur est fournie",
-    typeof manual?.downloadUrl === 'string' && manual.downloadUrl.endsWith('StreamControl-Setup-1.0.0.exe'),
+    typeof manual?.downloadUrl === 'string' && manual.downloadUrl.endsWith('StreamControl-Setup-2.0.0.exe'),
     manual?.downloadUrl,
   );
 
@@ -130,6 +130,13 @@ try {
     if (b) b.click();
   })()`);
   await sleep(700);
+  // Les reglages sont classes par categorie : le bouton de verification vit
+  // dans la categorie « Mises a jour ».
+  await cdp.evaluate(`(() => {
+    const chip = [...document.querySelectorAll('.chip')].find(x => x.textContent.includes('Mises a jour'));
+    if (chip) chip.click();
+  })()`);
+  await sleep(400);
   const clicked = await cdp.evaluate(`(() => {
     const b = [...document.querySelectorAll('button')].find((x) => /Verifier les mises a jour/i.test(x.textContent));
     if (!b) return false;
@@ -144,7 +151,7 @@ try {
   })()`);
   const ignored = await waitFor('la version est enregistree', async () => {
     const settings = await cdp.evaluate('window.streamcontrol.getSettings()');
-    return settings.ui.dismissedUpdateVersion === 'v1.0.0';
+    return settings.ui.dismissedUpdateVersion === 'v2.0.0';
   }, 8000);
   check('la version ecartee est enregistree', ignored);
   const closed = await waitFor(
@@ -159,12 +166,78 @@ try {
   const afterIgnore = await cdp.evaluate('window.streamcontrol.checkAppUpdate(false)');
   check('une version ecartee n est plus proposee', afterIgnore === null, JSON.stringify(afterIgnore));
   const forced = await cdp.evaluate('window.streamcontrol.checkAppUpdate(true)');
-  check('la verification manuelle la retrouve', forced?.version === 'v1.0.0', forced?.version);
+  check('la verification manuelle la retrouve', forced?.version === 'v2.0.0', forced?.version);
 
-  // --- 6. Le depot public repond sans jeton ------------------------------
-  console.log('\n--- depot public sans jeton ---');
+  // --- 6. La verification fonctionne sans jeton --------------------------
+  console.log('\n--- verification sans jeton ---');
   check('des requetes ont bien ete envoyees', releaseCalls > 0, String(releaseCalls));
   check('aucune requete n a exige un jeton', authenticatedCalls === 0, String(authenticatedCalls));
+
+  // --- 7. Changer un reglage ne re-propose PAS la mise a jour ------------
+  // Le defaut corrige : la verification dependait des reglages, si bien qu'un
+  // simple changement de parametre la relancait et faisait REAPPARAITRE la
+  // fenetre « mise a jour disponible », alors qu'on venait de la fermer.
+  console.log('\n--- changement de reglage ---');
+  // On oublie la version ecartee, puis on rouvre la fenetre via le bouton des
+  // Parametres (categorie « Mises a jour »), comme le ferait l'utilisateur.
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ ui: { dismissedUpdateVersion: '' } })`);
+  await sleep(500);
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('Parametres'));
+    if (b) b.click();
+  })()`);
+  await sleep(700);
+  await cdp.evaluate(`(() => {
+    const chip = [...document.querySelectorAll('.chip')].find(x => x.textContent.includes('Mises a jour'));
+    if (chip) chip.click();
+  })()`);
+  await sleep(400);
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find((x) => /Verifier les mises a jour/i.test(x.textContent));
+    if (b) b.click();
+  })()`);
+  await waitFor('la fenetre revient', async () => await cdp.evaluate('Boolean(document.querySelector(".update-modal"))'), 8000);
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.update-modal .modal-actions button')].find((x) => /Plus tard/i.test(x.textContent));
+    b.click();
+  })()`);
+  await sleep(500);
+  check('« Plus tard » ferme la fenetre', !(await cdp.evaluate('Boolean(document.querySelector(".update-modal"))')));
+  // Le badge doit rester : on peut revenir a la mise a jour plus tard, dans la
+  // meme session, en cliquant le badge.
+  check(
+    'le badge de mise a jour reste dans la barre laterale',
+    await cdp.evaluate('Boolean(document.querySelector(".update-badge"))'),
+  );
+  await cdp.evaluate(`(() => { const b = document.querySelector('.update-badge'); if (b) b.click(); })()`);
+  await sleep(500);
+  check(
+    'le badge rouvre la fenetre',
+    await cdp.evaluate('Boolean(document.querySelector(".update-modal"))'),
+  );
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.update-modal .modal-actions button')].find((x) => /Plus tard/i.test(x.textContent));
+    if (b) b.click();
+  })()`);
+  await sleep(400);
+
+  // Plusieurs changements de reglages, comme le ferait l'utilisateur.
+  const callsBefore = releaseCalls;
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ ui: { refreshIntervalMs: 4000 } })`);
+  await sleep(600);
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ ui: { maxLogLines: 1500 } })`);
+  await sleep(600);
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ ui: { theme: 'light' } })`);
+  await sleep(900);
+  check(
+    'la fenetre ne revient pas apres un changement de reglage',
+    !(await cdp.evaluate('Boolean(document.querySelector(".update-modal"))')),
+  );
+  check(
+    'aucune nouvelle requete de version n a ete faite',
+    releaseCalls === callsBefore,
+    `${callsBefore} -> ${releaseCalls}`,
+  );
 
   cdp.close();
 } catch (error) {

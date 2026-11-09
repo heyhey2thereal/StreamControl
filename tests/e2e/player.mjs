@@ -122,6 +122,13 @@ try {
   check('elle contient une video', player.body.includes('<video'));
   check('elle a un indicateur de chargement', player.body.includes('class="spinner"'));
   check('elle annonce l attente', player.body.includes('En attente'));
+  // L'image ne doit JAMAIS etre etiree : sans object-fit, une camera 4/3 est
+  // deformee, et le format parait « ecrase » (surtout dans la grille OBS).
+  check('elle preserve le format de l image', /object-fit:\s*contain/.test(player.body));
+
+  // L'apercu integre (source OBS) doit le preserver aussi.
+  const embed = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);
+  check('l apercu integre preserve le format', /object-fit:\s*contain/.test(embed.body));
 
   // --- 3. Aucune source : pas de session repetee cote MediaMTX -----------
   console.log('\n--- pas de spam sans source ---');

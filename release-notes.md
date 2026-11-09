@@ -1,71 +1,125 @@
-# StreamControl v1.0.0
+# StreamControl 2.0.1 — Bug Fixes
 
-Regie video pour sources **RTMP**, avec **MediaMTX** et **OBS Studio**.
+Correctifs et petites nouveautés, par-dessus la 2.0.0.
 Disponible sur **Windows**, **macOS** et **Linux**.
 
-## Nouveautes
+---
 
-- **Un seul point d'entree.** MediaMTX est le seul serveur de flux : il recoit
-  la publication et la redistribue. StreamControl le pilote, relaie le HLS et le
-  WebRTC, et sert ses propres pages. Les serveurs HTTP de MediaMTX n'ecoutent
-  que sur la boucle locale ; seuls le RTMP et le port des pages sont exposes au
-  reseau.
+## Nouveautés
 
-- **Adresses de diffusion.** Creation d'adresses avec protocole, chemin et cle
-  d'acces. Chaque adresse affiche son etat en direct (debit, definition, duree,
-  octets recus, spectateurs) et toutes ses URL, copiables en un clic.
+- **Enregistrement depuis le téléphone.** Le panneau distant mobile dispose
+  maintenant du bouton « Enregistrer la lecture » : le flux est capturé
+  **dans le navigateur du téléphone** et telecharge dans son dossier
+  Telechargements. Rien n'est ecrit sur le poste central. Cette fonction etait
+  jusqu'ici reservee a la vue ordinateur.
 
-- **Lecture sous la seconde.** Le lecteur essaie d'abord le **WebRTC (WHEP)**,
-  qui maintient l'image sous la seconde sans tampon ; le **HLS faible latence**
-  (parties de 200 ms) prend le relais si le WebRTC n'aboutit pas, et une
-  correction automatique empeche le flux de deriver.
+- **Enregistrements en MP4 partout.** Tous les fichiers produits sont des
+  `.mp4` lisibles par n'importe quel lecteur : enregistrement direct,
+  enregistrement par capture (quand le replay est actif), et replay instantane.
+  Le format se choisit dans Parametres > Enregistrement, avec la mention
+  explicite de l'extension ecrite.
 
-- **Pages web.** Une page de lecture reduite sert d'apercu au tableau de bord et
-  une page complete est ouvrable depuis un navigateur. Les adresses inconnues
-  sont refusees avant meme de contacter MediaMTX.
+---
 
-- **OBS Studio.** Connexion WebSocket v5, liste des scenes, changement de scene,
-  demarrage et arret de la diffusion et de l'enregistrement.
+## Corrections
 
-- **Scenes OBS.** Creez une scene, cliquez dessus, et choisissez de 1 a 4
-  adresses : OBS les repartit en grille (plein ecran, cote a cote, 2x2). Un
-  apercu montre la disposition avant de valider.
+- **Fausse alerte de mise a jour.** La fenetre « mise a jour disponible »
+  reapparaissait a chaque changement de parametre, meme apres « Plus tard ». La
+  verification ne se relance plus a chaque reglage. « Plus tard » ferme la
+  fenetre mais **garde le badge** dans la barre laterale, pour y revenir quand
+  on veut ; seul « Ne plus me rappeler » la retire.
 
-- **Mode studio.** Previsualisation et programme cote a cote, transition d'une
-  adresse a l'autre en un clic, choix de la transition et de sa duree : tout se
-  pilote depuis StreamControl, sans toucher a OBS.
+- **Format d'image ecrase.** L'image des cameras etait etiree pour remplir le
+  cadre : une source 4/3 apparaissait deformee, surtout dans la grille de scene
+  OBS. Le rapport de l'image est desormais preserve partout.
 
-- **Verrouillage.** Un mot de passe masque l'interface : utile quand le poste
-  sert de serveur en regie. Le mot de passe n'est jamais stocke en clair.
+- **Grille de scene OBS.** Chaque flux de la grille est maintenant declare a
+  OBS a la resolution de SA cellule (deux flux cote a cote = 960x1080 chacun),
+  et non a la taille du canevas. OBS recoit donc le bon format pour chaque flux.
 
-- **Visite guidee** au premier lancement, **FAQ** et **tutoriel OBS** integres.
+- **Concatenation MP4 corrigee.** Les segments MP4 fragmentes de MediaMTX
+  redemarrent chacun leur temps de decodage a zero : leur mise bout a bout
+  donnait un fichier que le lecteur ne jouait qu'en partie (un enregistrement de
+  6 s annoncait 1 s). Un assembleur dedie reecrit le temps de decodage cumule et
+  le numero de sequence : le fichier obtenu est un MP4 unique et complet.
 
-- **Interface.** Sombre, dense et sobre. Langue (francais, anglais), theme,
-  journaux en direct, parametres sauvegardes localement.
+- **« Appliquer et diffuser » ne coupe plus le direct.** Ce bouton basculait la
+  diffusion : quand OBS diffusait deja, il l'arretait. Il demarre la diffusion
+  seulement si elle n'est pas deja en cours.
 
-- **Trois systemes.** Installeurs Windows (NSIS), macOS (dmg, Apple Silicon et
-  Intel) et Linux (AppImage, deb), chacun avec son binaire MediaMTX.
+- **« Enregistrer la lecture » (Remote PC).** Le bouton demarre desormais la
+  lecture du flux si besoin : sans cela, l'enregistrement capturait une image
+  figee, donc un fichier vide.
 
-## Notes de version
+- **Panneau distant mobile.** La liste des flux se met a jour toute seule quand
+  une camera se connecte ou se deconnecte, sans rafraichir la page et sans
+  couper la lecture en cours. Les badges d'etat sont fiabilises, et un bouton
+  « Retour au direct » recolle a la derniere seconde.
 
-- Les URL de lecture (HLS, page web, WebRTC, API) pointent sur `127.0.0.1` :
-  elles sont servies par StreamControl sur ce poste, et Windows bloque une
-  requete d'un poste vers sa propre adresse de reseau. Les URL d'ingestion
-  (RTMP, SRT, RTSP) restent sur l'IPv4 du LAN, c'est la camera qui publie.
+---
+
+## Fichiers concernes (journal complet)
+
+### Ajoutes
+| Fichier | Role |
+|---|---|
+| `src/main/remote-desktop-page.ts` | Vue ordinateur du panneau distant : grille de tous les flux, enregistrement navigateur |
+| `src/main/fmp4.ts` | Assembleur de segments MP4 fragmentes (temps de decodage cumule, numero de sequence) |
+| `tests/e2e/remote.mjs` | Tests de bout en bout du panneau distant (interfaces, autorisations, enregistrement) |
+
+### Modifies
+| Fichier | Changement |
+|---|---|
+| `src/main/remote.ts` | Detection telephone/ordinateur (`describeDeviceKind`), autorisations par appareil, `kind` enregistre a l'appairage |
+| `src/main/remote-page.ts` | Vue mobile : enregistrement navigateur, bouton retour au direct, rafraichissement qui n'interrompt pas la lecture |
+| `src/main/web-pages.ts` | Choix de la page selon l'appareil, controle des autorisations (403), etat enrichi |
+| `src/main/replay.ts` | Tampon en fMP4, sauvegarde en MP4 via l'assembleur |
+| `src/main/capture.ts` | Capture assemblee en MP4 (writer fMP4 incremental) |
+| `src/main/player-page.ts` | `object-fit: contain` : le format de l'image n'est plus deforme |
+| `src/main/obs-controller.ts` | Chaque source de la grille recoit la resolution de sa cellule |
+| `src/main/settings.ts` | Autorisations du Remote par type d'appareil (refusees par defaut) |
+| `src/shared/types.ts` | Types `RemotePermissions`, `RemoteDeviceKind` |
+| `src/shared/i18n.ts` | Libelles du panneau distant, du format d'enregistrement (fr + en) |
+| `src/preload/index.ts` | Type de la demande d'appairage enrichi |
+| `src/renderer/hooks/useStreamControl.ts` | Verification de mise a jour unique, badge persistant, `obsStartStreaming` |
+| `src/renderer/App.tsx` | Le badge de mise a jour rouvre la fenetre ; Echap ne le retire que si elle est ouverte |
+| `src/renderer/components/UpdateDialog.tsx` | Affichage pilote par `updateDialogOpen` |
+| `src/renderer/components/RemoteApprovalDialog.tsx` | Affiche le type d'appareil (telephone / ordinateur) |
+| `src/renderer/views/RemoteView.tsx` | Tableau des autorisations par type d'appareil |
+| `src/renderer/views/ObsView.tsx` | « Appliquer et diffuser » ne bascule plus la diffusion |
+| `src/renderer/views/SettingsView.tsx` | Libelles du format d'enregistrement |
+| `src/renderer/styles/global.css` | Styles du tableau des autorisations |
+| `.github/workflows/build-installers.yml` | Une seule plateforme joint `release-notes.md` (course entre jobs) |
+| `tests/e2e/obs.mjs`, `player.mjs`, `update.mjs`, `replay.mjs` | Couverture des correctifs |
+| `tests/logic.test.mjs` | Tests de l'assembleur fMP4, des autorisations et du format |
+| `package.json` | Version 2.0.1 |
 
 ---
 
 ## Installation
 
-1. Telechargez l'installeur de votre systeme ci-dessous.
-2. Lancez-le (aucun droit administrateur n'est exige sur Windows).
-3. Au premier demarrage, autorisez l'acces reseau pour les reseaux prives,
-   sinon la camera ne pourra pas publier.
+Choisissez l'installeur de votre systeme dans les fichiers ci-dessous. Les
+binaires ne sont pas signes numeriquement : Windows SmartScreen affiche un
+avertissement (*Informations complementaires* puis *Executer quand meme*) et
+macOS Gatekeeper demande un clic droit > **Ouvrir** au premier lancement.
 
-Les binaires ne sont pas signes numeriquement : Windows SmartScreen affiche un
-avertissement (*Informations complementaires*, puis *Executer quand meme*) et
-macOS Gatekeeper demande un clic droit > *Ouvrir* au premier lancement.
+| Systeme | Fichier |
+|---|---|
+| **Windows** | `StreamControl-Setup-2.0.1.exe` |
+| **macOS (Apple Silicon)** | `StreamControl-2.0.1-arm64.dmg` |
+| **macOS (Intel)** | `StreamControl-2.0.1-x64.dmg` |
+| **Linux** | `StreamControl-2.0.1.AppImage` ou `StreamControl-2.0.1.deb` |
 
-Le fichier `build-log.txt` joint a cette version contient le journal de
-compilation complet : versions des outils, sortie de chaque etape, empreintes
-SHA-256 des fichiers produits.
+---
+
+## Notes
+
+- MediaMTX est fourni avec l'application : rien a installer.
+- OBS Studio est optionnel (pilote par WebSocket v5).
+- Aucun compte, aucun abonnement, aucun service cloud.
+
+## Composants tiers
+
+- **MediaMTX** (RTSP/RTMP/HLS/WebRTC/SRT server) — licence MIT.
+- **OBS Studio** — GPL-2.0, logiciel tiers separe, non inclus.
+- **FFmpeg** — optionnel, pour certaines fonctions.

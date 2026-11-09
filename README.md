@@ -19,9 +19,9 @@ Choisissez l'installeur de votre systeme dans la page **Releases** :
 
 | Systeme | Fichier |
 |---|---|
-| **Windows** | `StreamControl-Setup-1.0.0.exe` |
-| **macOS** | `StreamControl-1.0.0-arm64.dmg` (Apple Silicon) ou `-x64.dmg` (Intel) |
-| **Linux** | `StreamControl-1.0.0.AppImage` ou `.deb` |
+| **Windows** | `StreamControl-Setup-2.0.1.exe` |
+| **macOS** | `StreamControl-2.0.1-arm64.dmg` (Apple Silicon) ou `-x64.dmg` (Intel) |
+| **Linux** | `StreamControl-2.0.1.AppImage` ou `.deb` |
 
 Puis :
 
@@ -223,8 +223,8 @@ installateurs (Windows, macOS, Linux) :
 Pour publier une version :
 
 ```bash
-git tag -f -a v1.0.0 -m "StreamControl 1.0.0"
-git push origin -f v1.0.0
+git tag -f -a v2.0.1 -m "StreamControl 2.0.1"
+git push origin -f v2.0.1
 ```
 
 ---
@@ -244,6 +244,3 @@ licences.
 
 - **OBS Studio** — logiciel libre (GPLv2). Il n'est pas embarque : StreamControl
   s'y connecte s'il est deja installe sur le poste.
-
-
-commit = true

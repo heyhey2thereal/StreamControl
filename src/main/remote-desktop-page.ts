@@ -1,0 +1,813 @@
+/**
+ * Page web de StreamControl Remote, version ordinateur.
+ *
+ * Un appareil du reseau qui n'est pas le poste central (un autre PC, un
+ * portable) recoit cette page plutot que la version mobile. Elle montre tous
+ * les flux en grille, avec leurs parametres, et permet d'enregistrer une
+ * lecture **dans le navigateur** : le fichier part alors dans le dossier
+ * Telechargements de l'appareil, sans rien ecrire sur le poste central.
+ *
+ * Tout le HTML, le CSS et le JavaScript tiennent dans cette chaine, sans
+ * ressource externe hors hls.js, servi par MediaMTX via notre relais.
+ *
+ * Les autorisations viennent du poste : une section absente n'est pas seulement
+ * masquee, elle est aussi refusee par le serveur. Masquer ne suffit pas.
+ */
+import { createTranslator, DEFAULT_LANGUAGE, isLanguage } from '../shared/i18n';
+import type { RemotePermissions } from '../shared/types';
+
+export interface RemoteDesktopPageOptions {
+  /** Langue de l'interface du poste. */
+  language: string;
+  /** Vrai si un mot de passe d'acces est defini. */
+  requiresPassword: boolean;
+  /** Autorisations accordees aux ordinateurs. */
+  permissions: RemotePermissions;
+}
+
+/** Echappe le texte insere dans le HTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Page servie quand le panneau distant est desactive. */
+export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): string {
+  const language = isLanguage(options.language) ? options.language : DEFAULT_LANGUAGE;
+  const t = createTranslator(language);
+
+  const labels = {
+    title: t('remote.title'),
+    desktopBadge: t('remote.desktopBadge'),
+    passwordTitle: t('remote.passwordTitle'),
+    passwordBody: t('remote.passwordBody'),
+    passwordField: t('remote.passwordField'),
+    passwordSubmit: t('remote.passwordSubmit'),
+    passwordWrong: t('remote.passwordWrong'),
+    connecting: t('remote.connecting'),
+    waiting: t('remote.waiting'),
+    refused: t('remote.refused'),
+    expired: t('remote.expired'),
+    retry: t('remote.retry'),
+    streams: t('remote.streams'),
+    noStream: t('remote.noStream'),
+    live: t('state.live'),
+    offline: t('state.offline'),
+    scenes: t('remote.scenes'),
+    noObs: t('remote.noObs'),
+    take: t('remote.take'),
+    recording: t('recording.start'),
+    stopRecord: t('recording.stop'),
+    controls: t('remote.controls'),
+    lock: t('remote.lock'),
+    restartMediamtx: t('remote.restartMediamtx'),
+    disconnect: t('remote.disconnect'),
+    refresh: t('remote.refresh'),
+    confirmLock: t('remote.confirmLock'),
+    confirmRestart: t('remote.confirmRestart'),
+    done: t('remote.done'),
+    failed: t('remote.failed'),
+    noMediamtx: t('remote.noMediamtx'),
+    confirmDisconnect: t('remote.confirmDisconnect'),
+    cancel: t('action.cancel'),
+    macros: t('remote.macros'),
+    noMacros: t('remote.noMacros'),
+    // Enregistrement dans le navigateur.
+    downloadRecord: t('remote.downloadRecord'),
+    downloadStop: t('remote.downloadStop'),
+    downloadStarted: t('remote.downloadStarted'),
+    downloadSaved: t('remote.downloadSaved'),
+    downloadUnsupported: t('remote.downloadUnsupported'),
+    downloadHint: t('remote.downloadHint'),
+    watch: t('remote.watch'),
+    stopWatch: t('remote.stopWatch'),
+    playAll: t('remote.playAll'),
+    stopAll: t('remote.stopAll'),
+    liveEdge: t('remote.liveEdge'),
+    viewers: t('remote.viewers'),
+    noPermission: t('remote.noPermission'),
+  };
+
+  return `<!doctype html>
+<html lang="${escapeHtml(language)}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0d0f11">
+<title>${escapeHtml(t('remote.title'))}</title>
+<style>
+  :root { color-scheme: dark; --accent:#4ea8de; --ok:#3fb950; --err:#e5484d; --warn:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#0b0d10; color:#e9ecef;
+         font:14px/1.55 "Segoe UI",system-ui,sans-serif; padding-bottom:40px; }
+  header { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px;
+           padding:12px 22px; background:#14171b; border-bottom:1px solid #24272c; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.01em; }
+  .tag { font-size:10.5px; padding:3px 9px; border-radius:999px; border:1px solid #2c3037;
+         color:#8b929a; font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#6e767e; flex:none; }
+  .dot.on { background:var(--ok); }
+  .dot.err { background:var(--err); }
+  .spacer { flex:1; }
+  main { max-width:1500px; margin:0 auto; padding:18px 22px 0; }
+  h2 { font-size:11.5px; text-transform:uppercase; letter-spacing:.09em;
+       color:#7a828a; margin:26px 4px 11px; font-weight:600; }
+  h2:first-child { margin-top:4px; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); }
+  .card { border:1px solid #24272c; border-radius:11px; background:#14171b;
+          padding:13px 14px; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .row + .row { margin-top:9px; }
+  .grow { flex:1; min-width:0; }
+  .name { font-weight:600; font-size:14.5px; }
+  .meta { color:#7a828a; font-size:11.5px; margin-top:2px; }
+  .badge { font-size:10.5px; padding:3px 9px; border-radius:999px; flex:none;
+           border:1px solid #2c3037; color:#8b929a; font-weight:600; }
+  .badge.live { color:#7ee08a; border-color:#2f6b37; background:#12220f; }
+  .badge.rec { color:#ff9a9e; border-color:#6b2f33; background:#221011; }
+  video { width:100%; aspect-ratio:16/9; border-radius:8px; background:#000; margin-top:11px; display:block; }
+  button { font:inherit; border-radius:9px; border:1px solid #2c3037; background:#1b1f24;
+           color:#e9ecef; padding:9px 13px; cursor:pointer; font-size:13px; }
+  button:active { transform:scale(.99); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#04121c; font-weight:600; }
+  button.danger { color:#ff9a9e; border-color:#4a2427; }
+  button.rec { color:#ff9a9e; border-color:#6b2f33; }
+  button.rec.on { background:#e5484d; border-color:#e5484d; color:#fff; }
+  button.scene { width:100%; text-align:left; }
+  button.scene.active { border-color:var(--accent); color:#fff;
+                        background:color-mix(in srgb, var(--accent) 20%, #1b1f24); }
+  button:disabled { opacity:.45; cursor:default; }
+  .scene-list { display:flex; flex-direction:column; gap:8px; }
+  .actions { display:flex; gap:9px; flex-wrap:wrap; margin-top:11px; }
+  .actions button { flex:1; min-width:130px; }
+  /* Un flux hors ligne garde sa carte mais perd son image : elle laisserait
+     croire a une diffusion active. */
+  .card.offline video { display:none; }
+  .card.offline { opacity:.85; }
+  .macros { display:flex; gap:9px; flex-wrap:wrap; }
+  .macros button { flex:0 1 auto; }
+  .center { text-align:center; color:#a8b0b8; padding:70px 20px; }
+  .spin { width:26px; height:26px; margin:0 auto 14px; border-radius:50%;
+          border:3px solid #24272c; border-top-color:var(--accent);
+          animation:sp .9s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .field { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+  input[type=password] { font:inherit; background:#0f1216; color:#e9ecef; height:44px;
+                         border:1px solid #2c3037; border-radius:9px; padding:0 13px; max-width:340px; }
+  .toast { position:fixed; left:50%; transform:translate(-50%,10px); bottom:22px; z-index:5;
+           padding:11px 18px; border-radius:10px; background:#1b1f24;
+           border:1px solid #2c3037; font-size:13.5px; text-align:center;
+           opacity:0; transition:.22s; pointer-events:none; }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+  .toast.err { border-color:#4a2427; color:#ff9a9e; }
+  .muted { color:#7a828a; font-size:13px; }
+  .hint { color:#7a828a; font-size:12px; margin-top:6px; }
+</style></head>
+<body>
+<header>
+  <span class="dot" id="conn"></span>
+  <h1>${escapeHtml(t('remote.title'))}</h1>
+  <span class="tag">${escapeHtml(t('remote.desktopBadge'))}</span>
+  <span class="spacer"></span>
+  <button id="reload" style="display:none">${escapeHtml(t('remote.refresh'))}</button>
+</header>
+<div id="app"><div class="center"><div class="spin"></div><div id="msg">${escapeHtml(t('remote.connecting'))}</div></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  var L = ${JSON.stringify(labels)};
+  var REQUIRES_PASSWORD = ${options.requiresPassword ? 'true' : 'false'};
+  var PERMISSIONS = ${JSON.stringify(options.permissions)};
+  var TOKEN_KEY = 'streamcontrol-remote-token';
+  var app = document.getElementById('app');
+  var conn = document.getElementById('conn');
+  var toastEl = document.getElementById('toast');
+  var reloadBtn = document.getElementById('reload');
+  var toastTimer = null;
+  var state = null;
+  /** Lectures en cours, par identifiant de flux : { hls }. */
+  var playing = {};
+  /** Enregistreurs du navigateur, par identifiant de flux. */
+  var recorders = {};
+  /** Vrai une fois la grille construite : on ne la reconstruit plus ensuite. */
+  var gridReady = false;
+
+  function token() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+  function setToken(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {} }
+  function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+  function toast(message, isError) {
+    toastEl.textContent = message;
+    toastEl.className = 'toast show' + (isError ? ' err' : '');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.className = 'toast'; }, 2800);
+  }
+
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function api(path, options) {
+    options = options || {};
+    options.headers = options.headers || {};
+    if (token()) options.headers['X-Remote-Token'] = token();
+    if (options.body) options.headers['Content-Type'] = 'application/json';
+    return fetch(path, options).then(function (response) {
+      // Jeton refuse : l'appareil a ete retire du poste, ou le jeton a expire.
+      if (response.status === 401) {
+        clearToken();
+        showPairing();
+        throw new Error('unauthorized');
+      }
+      return response.json();
+    });
+  }
+
+  // --- Etapes d'acces ----------------------------------------------------
+  function showPassword(message) {
+    conn.className = 'dot';
+    app.innerHTML =
+      '<main><div class="card" style="max-width:460px">' +
+      '<div class="name">' + L.passwordTitle + '</div>' +
+      '<div class="meta">' + L.passwordBody + '</div>' +
+      '<div class="field" style="margin-top:12px">' +
+      '<input type="password" id="pw" placeholder="' + esc(L.passwordField) + '" autocomplete="off">' +
+      '</div>' +
+      '<button class="primary" id="pwgo">' + L.passwordSubmit + '</button>' +
+      (message ? '<div class="meta" style="margin-top:10px;color:#ff9a9e">' + esc(message) + '</div>' : '') +
+      '</div></main>';
+    var input = document.getElementById('pw');
+    var go = function () { startPairing(input.value); };
+    document.getElementById('pwgo').addEventListener('click', go);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+    input.focus();
+  }
+
+  function showPairing() {
+    reloadBtn.style.display = 'none';
+    if (REQUIRES_PASSWORD) { showPassword(''); return; }
+    startPairing('');
+  }
+
+  function startPairing(password) {
+    conn.className = 'dot';
+    app.innerHTML = '<div class="center"><div class="spin"></div><div id="msg"></div></div>';
+    var msg = document.getElementById('msg');
+    msg.textContent = L.connecting;
+    fetch('/remote/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password || '' }),
+    })
+      .then(function (r) {
+        if (r.status === 403) { showPassword(L.passwordWrong); throw new Error('password'); }
+        return r.json();
+      })
+      .then(function (data) {
+        msg.textContent = L.waiting;
+        poll(data.id, 0);
+      })
+      .catch(function (error) {
+        if (error && error.message === 'password') return;
+        msg.textContent = L.expired;
+      });
+  }
+
+  function poll(id, attempt) {
+    var msg = document.getElementById('msg');
+    if (!msg) return;
+    if (attempt > 80) { msg.textContent = L.expired; return; }
+    fetch('/remote/pair/' + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.status === 'accepted' && data.token) { setToken(data.token); load(); return; }
+        if (data.status === 'refused') { msg.textContent = L.refused; return; }
+        if (data.status === 'expired') { msg.textContent = L.expired; return; }
+        setTimeout(function () { poll(id, attempt + 1); }, 1500);
+      })
+      .catch(function () { setTimeout(function () { poll(id, attempt + 1); }, 2000); });
+  }
+
+  // --- Lecture des flux (HLS, hls.js) ------------------------------------
+  //
+  // On ne joue QUE les flux demandes. Lancer tous les flux d'un coup sature
+  // le decodeur du navigateur : il finit par mettre la lecture en pause de
+  // lui-meme (ou par afficher une image figee), et consomme beaucoup de
+  // reseau. Chaque flux reste donc en pause tant qu'on ne l'a pas demande.
+  function loadHlsLibrary(callback) {
+    if (window.Hls) { callback(); return; }
+    // hls.js est servi par MediaMTX, via notre relais : aucune ressource
+    // externe, et rien a installer cote navigateur.
+    var first = (state && state.streams && state.streams[0]) || null;
+    var base = first ? first.hls : '';
+    var src = base ? base.replace(/index\\.m3u8.*$/, 'hls.min.js') : '/hls/live/hls.min.js';
+    var script = document.createElement('script');
+    script.src = src;
+    script.onload = callback;
+    script.onerror = callback;
+    document.head.appendChild(script);
+  }
+
+  /** Demarre la lecture d'un flux, en restant au plus pres du direct. */
+  function startPlayback(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    if (!id || !video || playing[id]) return;
+    var src = card.getAttribute('data-hls');
+
+    function attach() {
+      var hls = new window.Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        maxLiveSyncPlaybackRate: 2,
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      playing[id] = { hls: hls };
+      video.play().catch(function () {});
+      updatePlayButtons();
+    }
+
+    // On reserve la place tout de suite, pour qu'un double clic ne lance pas
+    // deux sessions sur le meme flux.
+    playing[id] = { hls: null };
+    updatePlayButtons();
+
+    if (window.Hls && window.Hls.isSupported()) {
+      attach();
+    } else if (window.Hls) {
+      // HLS natif (Safari).
+      video.src = src;
+      video.play().catch(function () {});
+    } else {
+      // hls.js n'est pas encore charge : on le charge, puis on attache.
+      loadHlsLibrary(function () {
+        if (playing[id]) attach();
+      });
+    }
+  }
+
+  /** Arrete la lecture d'un flux et libere sa session HLS. */
+  function stopPlayback(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    var entry = playing[id];
+    if (entry) {
+      if (entry.hls) { try { entry.hls.destroy(); } catch (e) {} }
+      delete playing[id];
+    }
+    if (video) {
+      try { video.removeAttribute('src'); video.load(); } catch (e) {}
+    }
+    updatePlayButtons();
+  }
+
+  /**
+   * Saute a la derniere seconde du direct.
+   *
+   * Le HLS garde un petit tampon : la lecture est donc legerement en retard.
+   * On se place directement sur la position de direct que hls.js connait
+   * (liveSyncPosition) : c'est instantane. Si elle n'est pas disponible, on
+   * relance la session, ce qui recolle aussi au direct.
+   */
+  function jumpToLive(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    var entry = playing[id];
+
+    if (video && entry && entry.hls) {
+      try {
+        var livePosition = entry.hls.liveSyncPosition;
+        if (typeof livePosition === 'number' && isFinite(livePosition)) {
+          video.currentTime = livePosition;
+          video.play().catch(function () {});
+          toast(L.done);
+          return;
+        }
+      } catch (e) {
+        // Position indisponible : on retombe sur le rechargement ci-dessous.
+      }
+    }
+
+    stopPlayback(card);
+    if (id) startPlayback(card);
+    toast(L.done);
+  }
+
+  /** Met a jour les boutons lecture / direct selon l'etat reel. */
+  function updatePlayButtons() {
+    app.querySelectorAll('.card[data-id]').forEach(function (card) {
+      var id = card.getAttribute('data-id');
+      var play = card.querySelector('[data-play]');
+      var live = card.querySelector('[data-live]');
+      var active = Boolean(playing[id]);
+      if (play) play.textContent = active ? L.stopWatch : L.watch;
+      if (live) live.style.display = active ? '' : 'none';
+    });
+  }
+
+  // --- Enregistrement dans le navigateur ---------------------------------
+  /** Choisit le premier format accepte par le navigateur. */
+  function pickMime() {
+    var candidates = [
+      'video/mp4;codecs=h264',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    if (!window.MediaRecorder || !window.MediaRecorder.isTypeSupported) return '';
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (window.MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return '';
+  }
+
+  function stamp() {
+    var d = new Date();
+    function pad(n) { return String(n).padStart(2, '0'); }
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' +
+      pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+
+  function safeName(name) {
+    return String(name || 'flux').replace(/[^\\w-]+/g, '-').replace(/^-+|-+$/g, '') || 'flux';
+  }
+
+  /**
+   * Enregistre la lecture affichee, puis la telecharge.
+   *
+   * La capture se fait sur l'element video lui-meme (captureStream) : le
+   * fichier est donc exactement ce que l'appareil recoit. A l'arret, le
+   * navigateur ouvre son enregistrement de fichier habituel : le fichier va
+   * dans le dossier Telechargements, sans rien ecrire sur le poste central.
+   */
+  function toggleDownloadRecording(id, name, video) {
+    var existing = recorders[id];
+    if (existing) { try { existing.stop(); } catch (e) {} return; }
+    if (!window.MediaRecorder) { toast(L.downloadUnsupported, true); return; }
+    var stream = null;
+    if (video.captureStream) stream = video.captureStream();
+    else if (video.mozCaptureStream) stream = video.mozCaptureStream();
+    if (!stream) { toast(L.downloadUnsupported, true); return; }
+
+    var mime = pickMime();
+    var recorder;
+    try {
+      recorder = new window.MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    } catch (e) { toast(L.downloadUnsupported, true); return; }
+
+    var chunks = [];
+    recorder.ondataavailable = function (event) { if (event.data && event.data.size) chunks.push(event.data); };
+    recorder.onstop = function () {
+      delete recorders[id];
+      updateRecordButtons();
+      var type = (mime || 'video/webm').split(';')[0];
+      var ext = type.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+      var blob = new Blob(chunks, { type: type });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = safeName(name) + '_' + stamp() + '.' + ext;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      toast(L.downloadSaved);
+    };
+    recorder.start(1000);
+    recorders[id] = recorder;
+    updateRecordButtons();
+    toast(L.downloadStarted);
+  }
+
+  function updateRecordButtons() {
+    app.querySelectorAll('[data-dl]').forEach(function (b) {
+      var id = b.getAttribute('data-dl');
+      var active = Boolean(recorders[id]);
+      b.classList.toggle('on', active);
+      b.textContent = active ? L.downloadStop : L.downloadRecord;
+    });
+  }
+
+  // --- Panneau principal -------------------------------------------------
+  function load() {
+    conn.className = 'dot on';
+    reloadBtn.style.display = '';
+    api('/remote/state').then(function (data) {
+      state = data;
+      applyState();
+    }).catch(function () {});
+  }
+
+  /**
+   * Construit la coquille de la page, une seule fois.
+   *
+   * Les conteneurs existent toujours, meme vides : une section non autorisee
+   * est simplement masquee. On ne reconstruit donc JAMAIS la grille des flux,
+   * ce qui aurait pour effet de couper la lecture et les enregistrements en
+   * cours, et faisait disparaitre un flux nouvellement connecte jusqu'au
+   * prochain rafraichissement.
+   */
+  function buildShell() {
+    app.innerHTML =
+      '<main>' +
+      '<div id="sec-streams"><div class="row" style="align-items:flex-end">' +
+      '<h2 class="grow" style="margin-bottom:11px">' + L.streams + '</h2>' +
+      '<div style="display:flex;gap:8px;margin-bottom:9px">' +
+      '<button data-all="play">' + L.playAll + '</button>' +
+      '<button data-all="stop">' + L.stopAll + '</button>' +
+      '</div></div>' +
+      '<div class="grid" id="streams"></div></div>' +
+      '<div id="sec-obs"><h2>' + L.scenes + '</h2><div id="obs"></div></div>' +
+      '<div id="sec-macros"><h2>' + L.macros + '</h2><div id="macros"></div></div>' +
+      '<div id="sec-controls"><h2>' + L.controls + '</h2><div id="controls"></div></div>' +
+      '</main>';
+    app.addEventListener('click', onClick);
+    gridReady = true;
+  }
+
+  /** Applique l'etat courant : sections et flux, sans reconstruire la grille. */
+  function applyState() {
+    if (!state) return;
+    if (state.permissions) PERMISSIONS = state.permissions;
+    if (!gridReady) buildShell();
+    renderStreams(state.streams || []);
+    renderObs(state.obs || {});
+    renderMacros(state.macros || []);
+    renderControls();
+    updatePlayButtons();
+    updateRecordButtons();
+  }
+
+  /** Le flux est-il en ligne et jouable ? */
+  function isPlayable(s) {
+    return Boolean(s && s.publishing);
+  }
+
+  /** Carte d'un flux : en-tete, image, boutons. */
+  function createCard(s) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.setAttribute('data-id', s.id);
+    card.innerHTML =
+      '<div class="row">' +
+      '<span class="grow"><div class="name"></div><div class="meta"></div></span>' +
+      '<span class="badges"></span></div>' +
+      '<video controls playsinline muted preload="none"></video>' +
+      '<div class="actions"></div>' +
+      '<div class="hint"></div>';
+    syncCard(card, s);
+    return card;
+  }
+
+  /** Met a jour une carte existante, sans toucher a la balise video. */
+  function syncCard(card, s) {
+    card.setAttribute('data-hls', s.hls || '');
+    var playable = isPlayable(s);
+    card.classList.toggle('offline', !playable);
+
+    card.querySelector('.name').textContent = s.name || s.path;
+    var meta = [];
+    if (playable) {
+      if (s.bitrateKbps) meta.push(Math.round(s.bitrateKbps) + ' kbit/s');
+      if (s.videoWidth) meta.push(s.videoWidth + 'x' + s.videoHeight);
+      if (s.viewers) meta.push(s.viewers + ' ' + L.viewers);
+    }
+    card.querySelector('.meta').textContent = '/' + s.path + (meta.length ? ' · ' + meta.join(' · ') : '');
+
+    var badges = '';
+    if (s.recording) badges += '<span class="badge rec">REC</span>';
+    badges += '<span class="badge ' + (playable ? 'live' : '') + '">' + (playable ? L.live : L.offline) + '</span>';
+    card.querySelector('.badges').innerHTML = badges;
+
+    // Les boutons sont reconstruits a chaque mise a jour : ce ne sont pas des
+    // elements media, les remplacer ne coupe rien.
+    var actions = '';
+    if (playable) {
+      actions += '<button data-play>' + L.watch + '</button>';
+      actions += '<button data-live>' + L.liveEdge + '</button>';
+    }
+    if (PERMISSIONS.download && playable) {
+      actions += '<button class="rec" data-dl="' + esc(s.id) + '" data-name="' + esc(s.name) + '">' +
+        L.downloadRecord + '</button>';
+    }
+    if (PERMISSIONS.recording && playable) {
+      actions += '<button class="' + (s.recording ? 'danger' : '') + '" data-rec="' + esc(s.id) +
+        '" data-on="' + (s.recording ? '0' : '1') + '">' + (s.recording ? L.stopRecord : L.recording) + '</button>';
+    }
+    card.querySelector('.actions').innerHTML = actions;
+    card.querySelector('.hint').textContent = PERMISSIONS.download && playable ? L.downloadHint : '';
+  }
+
+  /**
+   * Aligne la grille sur la liste des flux, sans la reconstruire.
+   *
+   * Un flux apparait des sa connexion, disparait a sa deconnexion, et les
+   * cartes deja affichees gardent leur lecture : c'est ce qui permet de voir un
+   * flux arriver sans rafraichir la page.
+   */
+  function renderStreams(streams) {
+    var container = document.getElementById('streams');
+    if (!container) return;
+
+    if (!streams.length) {
+      // Plus aucun flux : on arrete tout et on affiche le message.
+      container.querySelectorAll('.card[data-id]').forEach(function (card) {
+        stopPlayback(card);
+        card.remove();
+      });
+      if (!container.querySelector('.muted')) {
+        container.innerHTML = '<div class="card muted">' + L.noStream + '</div>';
+      }
+      return;
+    }
+    var empty = container.querySelector('.muted');
+    if (empty) empty.remove();
+
+    var seen = {};
+    streams.forEach(function (s) {
+      seen[s.id] = true;
+      var card = container.querySelector('.card[data-id="' + cssEscape(s.id) + '"]');
+      if (!card) {
+        container.appendChild(createCard(s));
+      } else {
+        syncCard(card, s);
+        // On replace la carte a sa position si l'ordre a change.
+        container.appendChild(card);
+      }
+    });
+
+    // Un flux disparu emporte sa carte, et sa lecture est arretee.
+    container.querySelectorAll('.card[data-id]').forEach(function (card) {
+      if (!seen[card.getAttribute('data-id')]) {
+        stopPlayback(card);
+        card.remove();
+      }
+    });
+  }
+
+  /** Echappe une valeur pour un selecteur d'attribut. */
+  function cssEscape(value) {
+    return String(value).replace(/["\\\\]/g, '\\\\$&');
+  }
+
+  function renderObs(obs) {
+    var section = document.getElementById('sec-obs');
+    var container = document.getElementById('obs');
+    if (!section || !container) return;
+    section.style.display = PERMISSIONS.scenes ? '' : 'none';
+    if (!PERMISSIONS.scenes) return;
+
+    if (!obs.connected) {
+      container.innerHTML = '<div class="card muted">' + L.noObs + '</div>';
+      return;
+    }
+    var html = '<div class="card" style="max-width:640px"><div class="scene-list">';
+    (obs.scenes || []).forEach(function (scene) {
+      html += '<button class="scene' + (scene.active ? ' active' : '') +
+        '" data-scene="' + esc(scene.name) + '">' + esc(scene.name) + '</button>';
+    });
+    html += '</div>';
+    if (obs.studioMode) {
+      html += '<button class="primary" style="width:100%;margin-top:10px" data-action="transition">' + L.take + '</button>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function renderMacros(macros) {
+    var section = document.getElementById('sec-macros');
+    var container = document.getElementById('macros');
+    if (!section || !container) return;
+    section.style.display = PERMISSIONS.macros ? '' : 'none';
+    if (!PERMISSIONS.macros) return;
+
+    if (!macros.length) {
+      container.innerHTML = '<div class="card muted">' + L.noMacros + '</div>';
+      return;
+    }
+    var html = '<div class="card"><div class="macros">';
+    macros.forEach(function (macro) {
+      html += '<button data-macro="' + esc(macro.id) + '">' + esc(macro.name) + '</button>';
+    });
+    html += '</div></div>';
+    container.innerHTML = html;
+  }
+
+  function renderControls() {
+    var section = document.getElementById('sec-controls');
+    var container = document.getElementById('controls');
+    if (!section || !container) return;
+    section.style.display = PERMISSIONS.controls ? '' : 'none';
+    if (!PERMISSIONS.controls) return;
+
+    var html = '<div class="card" style="max-width:640px"><div class="actions">';
+    html += '<button data-action="lock">' + L.lock + '</button>';
+    html += '<button class="' + (state.mediamtxRunning ? '' : 'primary') + '" data-action="restart-mediamtx">' +
+      L.restartMediamtx + '</button>';
+    html += '<button class="danger" data-action="disconnect">' + L.disconnect + '</button>';
+    html += '</div>';
+    if (!state.mediamtxRunning) html += '<div class="hint">' + L.noMediamtx + '</div>';
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  /**
+   * Un seul ecouteur, sur le conteneur : les cartes etant reconstruites ou
+   * remplacees, s'abonner a chacune accumulerait les ecouteurs.
+   */
+  function onClick(event) {
+    var button = event.target.closest('button');
+    if (!button || !app.contains(button)) return;
+    var card = button.closest('.card[data-id]');
+
+    if (button.hasAttribute('data-play')) {
+      var id = card.getAttribute('data-id');
+      if (playing[id]) stopPlayback(card);
+      else startPlayback(card);
+      return;
+    }
+    if (button.hasAttribute('data-live')) { jumpToLive(card); return; }
+    if (button.hasAttribute('data-dl')) {
+      // Enregistrer suppose que l'image defile : si le flux n'est pas en
+      // lecture, on la demarre, sinon la capture serait vide (image figee).
+      if (card && !playing[card.getAttribute('data-id')]) startPlayback(card);
+      toggleDownloadRecording(button.getAttribute('data-dl'), button.getAttribute('data-name'),
+        card ? card.querySelector('video') : null);
+      return;
+    }
+    if (button.hasAttribute('data-rec')) {
+      button.disabled = true;
+      act('/remote/action', {
+        action: 'recording',
+        id: button.getAttribute('data-rec'),
+        record: button.getAttribute('data-on') === '1',
+      });
+      return;
+    }
+    if (button.hasAttribute('data-all')) {
+      var mode = button.getAttribute('data-all');
+      app.querySelectorAll('.card[data-id]').forEach(function (c) {
+        if (mode === 'play') startPlayback(c);
+        else stopPlayback(c);
+      });
+      return;
+    }
+    if (button.hasAttribute('data-scene')) {
+      act('/remote/scene', { scene: button.getAttribute('data-scene') });
+      return;
+    }
+    if (button.hasAttribute('data-macro')) {
+      button.disabled = true;
+      act('/remote/action', { action: 'macro', id: button.getAttribute('data-macro') });
+      setTimeout(function () { button.disabled = false; }, 1500);
+      return;
+    }
+    if (button.hasAttribute('data-action')) { onAction(button.getAttribute('data-action')); return; }
+  }
+
+  function onAction(action) {
+    if (action === 'refresh') { load(); toast(L.done); return; }
+    var question = action === 'lock' ? L.confirmLock
+      : action === 'restart-mediamtx' ? L.confirmRestart
+      : action === 'disconnect' ? L.confirmDisconnect : null;
+    if (question && !window.confirm(question)) return;
+    if (action === 'disconnect') { clearToken(); showPairing(); return; }
+    act('/remote/action', { action: action });
+  }
+
+  function act(path, body) {
+    api(path, { method: 'POST', body: JSON.stringify(body) })
+      .then(function (result) {
+        if (result && result.ok === false) { toast(result.message || L.failed, true); return; }
+        toast(L.done);
+        load();
+      })
+      .catch(function () {});
+  }
+
+  reloadBtn.addEventListener('click', function () { load(); toast(L.done); });
+
+  if (token()) load();
+  else showPairing();
+
+  // Rafraichissement doux : on aligne la grille sur l'etat reel toutes les 2 s.
+  // C'est ce qui fait apparaitre un flux des sa connexion, sans rafraichir la
+  // page, et sans couper la lecture ni les enregistrements en cours.
+  setInterval(function () {
+    if (!token()) return;
+    api('/remote/state').then(function (data) {
+      state = data;
+      applyState();
+    }).catch(function () {});
+  }, 2000);
+})();
+</script>
+</body></html>`;
+}

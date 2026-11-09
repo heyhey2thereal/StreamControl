@@ -10,6 +10,8 @@ import type {
   GatherResult,
   LockState,
   LogEntry,
+  Macro,
+  MacroRunEntry,
   ObsStatus,
   PreflightReport,
   ServiceActionResult,
@@ -20,8 +22,11 @@ import type {
   StreamEndpointView,
   StreamMutationResult,
   StreamStatus,
+  StreamDiagnostics,
   StreamUrls,
   UpdateResult,
+  WatchAlert,
+  ShowStep,
   Unsubscribe,
 } from '../shared/types';
 
@@ -42,6 +47,9 @@ const EVENT_CHANNELS = new Set<string>([
   CHANNELS.eventStreamStatus,
   CHANNELS.eventDeviceConnected,
   CHANNELS.eventDeviceDisconnected,
+  CHANNELS.eventRemotePairRequest,
+  CHANNELS.eventMacroNotice,
+  CHANNELS.eventMacroPlaySound,
 ]);
 
 const api: StreamControlApi = {
@@ -116,6 +124,72 @@ const api: StreamControlApi = {
   streamStatus: (id) => ipcRenderer.invoke(CHANNELS.streamStatus, id) as Promise<StreamStatus>,
   openStreamWindow: (id) => ipcRenderer.invoke(CHANNELS.streamOpenWindow, id) as Promise<boolean>,
   closeStreamWindow: (id) => ipcRenderer.invoke(CHANNELS.streamCloseWindow, id) as Promise<boolean>,
+  streamSetRecording: (id, record) =>
+    ipcRenderer.invoke(CHANNELS.streamSetRecording, id, record) as Promise<StreamMutationResult>,
+
+  recordingProbe: () =>
+    ipcRenderer.invoke(CHANNELS.recordingProbe) as Promise<{
+      ok: boolean;
+      directory: string;
+      message: string;
+    }>,
+  recordingOpen: () => ipcRenderer.invoke(CHANNELS.recordingOpen) as Promise<GatherResult>,
+  recordingPickDir: () => ipcRenderer.invoke(CHANNELS.recordingPickDir) as Promise<string | null>,
+
+  remotePending: () =>
+    ipcRenderer.invoke(CHANNELS.remotePending) as Promise<
+      Array<{ id: string; name: string; address: string; kind: 'phone' | 'desktop'; at: number }>
+    >,
+  remoteApprove: (id, accept) =>
+    ipcRenderer.invoke(CHANNELS.remoteApprove, id, accept) as Promise<{ ok: boolean }>,
+  remoteForget: (token) =>
+    ipcRenderer.invoke(CHANNELS.remoteForget, token) as Promise<{ ok: boolean }>,
+  remoteSetPassword: (password) =>
+    ipcRenderer.invoke(CHANNELS.remoteSetPassword, password) as Promise<{
+      ok: boolean;
+      hasPassword: boolean;
+      message?: string;
+    }>,
+
+  macrosList: () => ipcRenderer.invoke(CHANNELS.macrosList) as Promise<Macro[]>,
+  macroCreate: (name) => ipcRenderer.invoke(CHANNELS.macroCreate, name) as Promise<Macro>,
+  macroUpdate: (id, patch) => ipcRenderer.invoke(CHANNELS.macroUpdate, id, patch) as Promise<Macro | null>,
+  macroDelete: (id) => ipcRenderer.invoke(CHANNELS.macroDelete, id) as Promise<{ ok: boolean }>,
+  macroRun: (id) =>
+    ipcRenderer.invoke(CHANNELS.macroRun, id) as Promise<{ ok: boolean; executed: number; message?: string }>,
+  macroStop: (id) => ipcRenderer.invoke(CHANNELS.macroStop, id) as Promise<{ ok: boolean }>,
+  macrosRunning: () => ipcRenderer.invoke(CHANNELS.macrosRunning) as Promise<{ running: string[] }>,
+  macroDuplicate: (id) => ipcRenderer.invoke(CHANNELS.macroDuplicate, id) as Promise<Macro | null>,
+  macroHistory: () => ipcRenderer.invoke(CHANNELS.macroHistory) as Promise<MacroRunEntry[]>,
+  macroHistoryClear: () => ipcRenderer.invoke(CHANNELS.macroHistoryClear) as Promise<{ ok: boolean }>,
+  macroExport: () => ipcRenderer.invoke(CHANNELS.macroExport) as Promise<string>,
+  macroImport: (raw) =>
+    ipcRenderer.invoke(CHANNELS.macroImport, raw) as Promise<{ imported: number; message?: string }>,
+  macroFromTemplate: (id, name) =>
+    ipcRenderer.invoke(CHANNELS.macroFromTemplate, id, name) as Promise<Macro | null>,
+  macroPickPath: (kind) =>
+    ipcRenderer.invoke(CHANNELS.macroPickPath, kind) as Promise<string | null>,
+  macroReadSound: (filePath) =>
+    ipcRenderer.invoke(CHANNELS.macroReadSound, filePath) as Promise<string | null>,
+
+  showList: () => ipcRenderer.invoke(CHANNELS.showList) as Promise<ShowStep[]>,
+  showAdd: (name, at, notes) =>
+    ipcRenderer.invoke(CHANNELS.showAdd, name, at, notes) as Promise<ShowStep>,
+  showUpdate: (id, patch) => ipcRenderer.invoke(CHANNELS.showUpdate, id, patch) as Promise<{ ok: boolean }>,
+  showDelete: (id) => ipcRenderer.invoke(CHANNELS.showDelete, id) as Promise<{ ok: boolean }>,
+  showReset: () => ipcRenderer.invoke(CHANNELS.showReset) as Promise<{ ok: boolean }>,
+  showNext: () =>
+    ipcRenderer.invoke(CHANNELS.showNext) as Promise<{ ok: boolean; step?: ShowStep; message?: string }>,
+
+  watchAlerts: () => ipcRenderer.invoke(CHANNELS.watchAlerts) as Promise<WatchAlert[]>,
+  watchAcknowledge: () => ipcRenderer.invoke(CHANNELS.watchAcknowledge) as Promise<{ ok: boolean }>,
+  watchReset: () => ipcRenderer.invoke(CHANNELS.watchReset) as Promise<{ ok: boolean }>,
+  diagnosticsList: () => ipcRenderer.invoke(CHANNELS.diagnosticsList) as Promise<StreamDiagnostics[]>,
+
+  replaySave: (id) => ipcRenderer.invoke(CHANNELS.replaySave, id) as Promise<string | null>,
+  replayAvailable: (id) =>
+    ipcRenderer.invoke(CHANNELS.replayAvailable, id) as Promise<{ seconds: number }>,
+  replayOpenFolder: () => ipcRenderer.invoke(CHANNELS.replayOpenFolder) as Promise<GatherResult>,
 
   storageList: () => ipcRenderer.invoke(CHANNELS.storageList) as Promise<StorageEntry[]>,
   storagePickDir: () => ipcRenderer.invoke(CHANNELS.storagePickDir) as Promise<string | null>,

@@ -22,6 +22,9 @@ import type {
 } from '../shared/types';
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
+import { buildPathOptions, resolveRecordingDir } from './recording';
+import { replayPathOptions, saveReplay, replayState } from './replay';
+import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
 import { StreamRegistry, normalizePath } from './stream-registry';
@@ -118,6 +121,11 @@ export class StreamController extends EventEmitter {
   private readonly reportedUnknown = new Set<string>();
   /** Chemins actuellement publies, pour detecter les connexions. */
   private readonly connected = new Set<string>();
+  /**
+   * Capture des flux quand le replay occupe le reglage `record` de MediaMTX.
+   * Voir capture.ts : c'est ce qui permet d'enregistrer ET de garder un tampon.
+   */
+  private readonly capture: CaptureManager;
 
   constructor(options: StreamControllerOptions) {
     super();
@@ -129,6 +137,12 @@ export class StreamController extends EventEmitter {
     this.getNetwork = options.getNetwork;
     this.appVersion = options.appVersion;
     this.getWebPagesPort = options.getWebPagesPort;
+    this.capture = new CaptureManager(
+      options.logger,
+      () => this.settings.get().replay.path,
+      () => resolveRecordingDir(this.settings.get().recording.path),
+    );
+    this.capture.on('changed', () => this.broadcastStreams());
 
     // Toute evolution du registre est repercutee dans l'interface.
     this.registry.on('changed', () => {
@@ -189,6 +203,12 @@ export class StreamController extends EventEmitter {
         hasAudio: (live?.tracks ?? []).some((track) => /aac|audio|opus|mp3/i.test(track)),
         viewers: live?.readers ?? 0,
         publisher: live?.remoteAddr,
+        // Avec le replay actif, c'est la capture qui dit si l'enregistrement
+        // tourne : le reglage MediaMTX sert alors au tampon, pas a la capture.
+        recording: this.settings.get().replay.enabled
+          ? this.capture.isCapturing(endpoint.id)
+          : live?.recording === true,
+        recordingPath: live?.recordingPath,
       });
     }
 
@@ -332,6 +352,7 @@ export class StreamController extends EventEmitter {
         protocol: (input.protocol ?? 'rtmp') as IngestProtocol,
       });
       this.logger.info('streams', `Adresse "${endpoint.name}" creee sur /${endpoint.path}.`);
+      void this.syncPaths();
       return { ok: true, endpoint: this.view(endpoint.id) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -344,6 +365,7 @@ export class StreamController extends EventEmitter {
     try {
       this.registry.update(id, patch);
       this.logger.info('streams', `Adresse ${id} mise a jour.`);
+      void this.syncPaths();
       return { ok: true, endpoint: this.view(id) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -358,8 +380,86 @@ export class StreamController extends EventEmitter {
 
     this.closeViewerWindow(id);
     this.registry.remove(id);
+    // Le chemin disparait de MediaMTX au prochain redemarrage : le laisser en
+    // place n'empeche pas un flux fantome de publier, mais l'enregistrement
+    // s'arrete de lui-meme puisqu'on ne le reconfigure plus.
+    void this.syncPaths();
     this.logger.info('streams', `Adresse "${endpoint.name}" supprimee.`);
     return { ok: true };
+  }
+
+  /**
+   * Declare chaque adresse dans MediaMTX, avec son reglage d'enregistrement.
+   *
+   * C'est ce qui rend l'enregistrement independant d'un flux a l'autre :
+   * chaque chemin porte son propre `record`. MediaMTX n'a plus besoin d'un
+   * chemin generique `all_others` pour publier, mais on le garde en secours
+   * pour les sources qui publient sur une adresse inconnue.
+   *
+   * Appelee a chaque demarrage de MediaMTX et a chaque changement d'adresse.
+   */
+  async syncPaths(): Promise<void> {
+    if (!this.mediamtx.isRunning) return;
+
+    const settings = this.settings.get();
+    for (const endpoint of this.registry.list()) {
+      // MediaMTX n'a qu'UN reglage `record` par chemin. Quand le replay est
+      // actif, il sert au tampon roulant : c'est alors la capture (voir
+      // capture.ts) qui ecrit l'enregistrement demande, en recopiant les
+      // segments du tampon. Les deux ne peuvent donc pas partager ce reglage.
+      const options = settings.replay.enabled
+        ? replayPathOptions(settings, endpoint.path)
+        : buildPathOptions(settings, endpoint.path, endpoint.record === true);
+      const ok = await this.mediamtx.configurePath(endpoint.path, options);
+      if (!ok) {
+        this.logger.warn('streams', `Chemin /${endpoint.path} non configure dans MediaMTX.`);
+      }
+
+      // Avec le replay actif, on demarre ou arrete la capture selon la demande.
+      // L'echec est signale : une capture qui ne demarre pas doit se voir, pas
+      // rester silencieuse (l'utilisateur croirait enregistrer).
+      if (settings.replay.enabled) {
+        try {
+          const capturing = this.capture.isCapturing(endpoint.id);
+          if (endpoint.record === true && !capturing) {
+            await this.capture.start(endpoint.id, endpoint.path, endpoint.name);
+          } else if (endpoint.record !== true && capturing) {
+            await this.capture.stop(endpoint.id);
+          }
+        } catch (error) {
+          this.logger.errorFrom('capture', error, `Capture de /${endpoint.path} impossible`);
+        }
+      }
+    }
+    this.logger.info('streams', `Chemins synchronises (${this.registry.list().length}).`);
+    this.emit('streams-refresh');
+  }
+
+  /** Vrai si ce flux est actuellement enregistre par MediaMTX. */
+  async isRecording(id: string): Promise<boolean> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return false;
+    return this.mediamtx.isRecording(endpoint.path);
+  }
+
+  /**
+   * Sauvegarde les dernieres secondes d'un flux (replay instantane).
+   *
+   * @returns le chemin du fichier cree, ou null si le tampon est vide.
+   */
+  async saveReplay(id: string): Promise<string | null> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return null;
+    const settings = this.settings.get();
+    return saveReplay(settings.replay.path, endpoint.path, endpoint.name, this.logger);
+  }
+
+  /** Duree de replay disponible pour un flux, en secondes. */
+  async replayAvailable(id: string): Promise<number> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return 0;
+    const state = await replayState(this.settings.get().replay.path, endpoint.path);
+    return state.availableSeconds;
   }
 
   status(id: string): StreamStatus {
