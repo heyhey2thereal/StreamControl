@@ -5,8 +5,14 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 
 ## 1. Refonte complete du replay
 - **Nouvelle categorie « Replay »** dans la barre laterale, a part entiere.
-- On y choisit le **flux**, puis la **plage** a recuperer : « de N secondes en
-  arriere jusqu'a M secondes en arriere » (0 = la toute derniere seconde). Le
+- **Barre de lecture intuitive** : une barre montre la memoire disponible (les
+  dernieres secondes) et **avance toute seule** au rythme du direct. Deux
+  **poignees deplacables** a la souris :
+  - celle de **gauche** fixe le **debut** de l'extrait ;
+  - celle de **droite** fixe la **fin**.
+  La duree choisie s'affiche en clair, et la barre se remplit au fur et a
+  mesure que le flux continue.
+- On y choisit le **flux**, puis la **plage** a recuperer. Le
   fichier MP4 est ecrit dans le **dossier des replays**.
 - **Memoire configurable** (Parametres > Replay) : combien de secondes de chaque
   flux sont conservees. Un replay plus long que cette memoire est refuse, avec
@@ -24,19 +30,27 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   `src/renderer/styles/global.css`.
 
 ## 2. Debit et decalage du panneau distant (PC et mobile)
+- **Lecture WebRTC (WHEP) en priorite.** La page du poste qui « fonctionne
+  bien » lit en WebRTC (image sous la seconde) et ne retombe sur le HLS qu'en
+  secours ; le panneau distant, lui, ne faisait que du HLS, d'ou le retard. Il
+  essaie desormais le **WebRTC d'abord**, puis bascule sur le HLS si besoin.
 - **Debit trop eleve** : l'enregistrement dans le navigateur re-encodait au
   debit par defaut du navigateur, souvent bien au-dela de la source. Le debit
   de la source est desormais transmis au `MediaRecorder`, qui enregistre au
   meme debit.
 - **Decalage et retour au direct inefficace** : les lecteurs du panneau distant
-  n'avaient pas les reglages HLS de la page de lecture du poste (celle qui
-  fonctionne bien). Ils les ont maintenant : faible latence, un seul segment
-  d'avance, aucun tampon arriere, et une **correction de latence** qui replace
-  l'image au plus pres du direct des qu'elle prend du retard.
+  n'avaient pas les reglages HLS de la page de lecture du poste. Ils les ont
+  maintenant : faible latence, un seul segment d'avance, aucun tampon arriere,
+  et une **correction de latence** qui replace l'image au plus pres du direct
+  des qu'elle prend du retard.
 - Le bouton **« Retour au direct »** vise d'abord la fin du tampon deja charge
   (le plus proche du direct), puis la position de direct de hls.js, puis un
   rechargement en dernier recours. Il rattrape donc vraiment le retard.
-- Fichiers : `src/main/remote-desktop-page.ts`, `src/main/remote-page.ts`.
+- **Plein ecran** : nouveau bouton par flux. Il passe par l'API Fullscreen du
+  navigateur (sur la carte entiere, commandes comprises), avec la variante
+  `webkit` pour Safari.
+- Fichiers : `src/main/remote-desktop-page.ts`, `src/main/remote-page.ts`,
+  `src/main/web-pages.ts` (URL WebRTC/WHEP dans l'etat distant).
 
 ## 3. Bug : une cellule de scene affichait la video d'une autre
 - **Cause** : deux sources navigateur de meme origine (`/embed/live` et
@@ -81,5 +95,5 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **41 tests unitaires · 479 verifications e2e · 0 echec.**
+Chiffres : **41 tests unitaires · 482 verifications e2e · 0 echec.**
 

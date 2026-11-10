@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReplayState, StreamEndpointView } from '../../shared/types';
 import type { StreamControl } from '../hooks/useStreamControl';
 import { useTranslation } from '../hooks/useTranslation';
@@ -8,22 +8,29 @@ import { Spinner } from '../components/Spinner';
 /**
  * Onglet Replay.
  *
- * On recupere un extrait du direct : on choisit le flux, la duree voulue
- * (« de N secondes a M secondes en arriere »), et on sauvegarde un MP4 dans le
- * dossier des replays. L'application memorise en continu les dernieres
- * secondes de chaque flux (voir les Parametres > Replay) : un replay plus long
- * que cette memoire est refuse.
+ * On recupere un extrait du direct. Une **barre de lecture** montre la memoire
+ * disponible (les dernieres secondes) : elle avance toute seule au rythme du
+ * direct. Deux **poignees** s'y deplacent :
+ * - celle de gauche fixe le **debut** de l'extrait ;
+ * - celle de droite fixe la **fin**.
+ *
+ * La duree choisie s'affiche en clair, et le bouton sauvegarde un MP4 dans le
+ * dossier des replays. Un extrait plus long que la memoire, ou plus court que
+ * le minimum, est refuse.
  */
 export function ReplayView({ sc }: { sc: StreamControl }) {
   const { t } = useTranslation();
   const streams = sc.streams;
   const [selectedId, setSelectedId] = useState<string>('');
   const [states, setStates] = useState<Record<string, ReplayState>>({});
-  const [fromSeconds, setFromSeconds] = useState(30);
-  const [toSeconds, setToSeconds] = useState(0);
+  /** Positions des poignees, en secondes en arriere (0 = direct). */
+  const [startAgo, setStartAgo] = useState(30);
+  const [endAgo, setEndAgo] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [savedFile, setSavedFile] = useState('');
+  const barRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef<'start' | 'end' | null>(null);
 
   const memory = sc.settings?.replay.bufferSeconds ?? 60;
   const minimum = sc.settings?.replay.minimumSeconds ?? 30;
@@ -37,7 +44,8 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
     if (live) setSelectedId(live.id);
   }, [selectedId, streams]);
 
-  // On relit l'etat de chaque flux pour connaitre la memoire disponible.
+  // On relit l'etat de chaque flux : c'est ce qui fait grandir la barre au fur
+  // et a mesure que le flux continue.
   const refresh = useCallback(async () => {
     const next: Record<string, ReplayState> = {};
     for (const stream of streams) {
@@ -52,7 +60,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
 
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
+    const timer = setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
   }, [refresh]);
 
@@ -60,8 +68,38 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   const selectedState = selectedId ? states[selectedId] : undefined;
   const available = selectedState?.availableSeconds ?? 0;
 
-  // Duree reellement demandee : « de from a to », bornee par la memoire.
-  const wanted = Math.max(0, Math.min(fromSeconds, memory) - Math.max(0, toSeconds));
+  // La barre represente la memoire pleine (0 a `memory`). Le remplissage reel
+  // est la partie deja memorisee : elle grandit tant que le flux publie.
+  const pct = (seconds: number) => `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
+  // Position d'une seconde "en arriere" sur la barre : 0 (direct) est a DROITE.
+  const startLeft = `${Math.min(100, Math.max(0, ((memory - startAgo) / memory) * 100))}%`;
+  const endLeft = `${Math.min(100, Math.max(0, ((memory - endAgo) / memory) * 100))}%`;
+
+  const wanted = Math.max(0, startAgo - endAgo);
+
+  /** Convertit une position horizontale (0..1) en secondes en arriere. */
+  const secondsFromRatio = (ratio: number) => Math.round((1 - Math.min(1, Math.max(0, ratio))) * memory);
+
+  const onPointerMove = (event: React.PointerEvent | PointerEvent) => {
+    if (!dragging.current || !barRef.current) return;
+    const rect = barRef.current.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    const value = secondsFromRatio(ratio);
+    if (dragging.current === 'start') setStartAgo(Math.max(endAgo, Math.min(memory, value)));
+    else setEndAgo(Math.max(0, Math.min(startAgo, value)));
+  };
+
+  const stopDrag = () => { dragging.current = null; };
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => onPointerMove(event);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stopDrag);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stopDrag);
+    };
+  });
 
   const save = async () => {
     if (!selected) return;
@@ -69,7 +107,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
     setMessage('');
     setSavedFile('');
     try {
-      const result = await sc.saveReplayRange(selected.id, { fromSeconds, toSeconds });
+      const result = await sc.saveReplayRange(selected.id, { fromSeconds: startAgo, toSeconds: endAgo });
       if (result?.ok) {
         setMessage(result.message);
         setSavedFile(result.file ?? '');
@@ -144,45 +182,54 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           )}
         </div>
 
-        {/* --- Choix de la plage -------------------------------------- */}
+        {/* --- Barre de lecture --------------------------------------- */}
         <div className="panel">
           <div className="panel-head">
-            <h2 className="panel-title">{t('replay.rangeTitle')}</h2>
+            <h2 className="panel-title">{t('replay.timelineTitle')}</h2>
           </div>
 
-          <div className="hint">{t('replay.rangeHint', { memory, minimum })}</div>
+          <div className="hint">{t('replay.timelineHint', { memory })}</div>
 
-          <div className="grid grid-2" style={{ marginTop: 12 }}>
-            <div className="field">
-              <label>{t('replay.fromLabel')}</label>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={memory}
-                value={fromSeconds}
-                onChange={(event) => setFromSeconds(Number.parseInt(event.target.value, 10) || 0)}
-              />
-              <div className="hint">{t('replay.fromHint')}</div>
+          <div className="replay-timeline">
+            {/* Graduations : la memoire a gauche, le direct a droite. */}
+            <div className="replay-axis">
+              <span>{t('replay.axisOldest', { seconds: memory })}</span>
+              <span className="replay-live-tag">{t('replay.axisLive')}</span>
             </div>
-            <div className="field">
-              <label>{t('replay.toLabel')}</label>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={memory}
-                value={toSeconds}
-                onChange={(event) => setToSeconds(Number.parseInt(event.target.value, 10) || 0)}
+
+            <div className="replay-bar" ref={barRef}>
+              {/* Partie reellement memorisee : elle grandit avec le direct. */}
+              <div className="replay-bar-fill" style={{ width: pct(available) }} />
+              {/* Selection entre les deux poignees. */}
+              <div
+                className="replay-bar-select"
+                style={{ left: startLeft, right: `calc(100% - ${endLeft})` }}
               />
-              <div className="hint">{t('replay.toHint')}</div>
+              {/* Poignee de debut (a gauche). */}
+              <button
+                type="button"
+                className="replay-handle"
+                style={{ left: startLeft }}
+                aria-label={t('replay.handleStart')}
+                onPointerDown={(event) => { dragging.current = 'start'; event.preventDefault(); }}
+              >
+                <span className="replay-handle-label">{startAgo}s</span>
+              </button>
+              {/* Poignee de fin (a droite). */}
+              <button
+                type="button"
+                className="replay-handle"
+                style={{ left: endLeft }}
+                aria-label={t('replay.handleEnd')}
+                onPointerDown={(event) => { dragging.current = 'end'; event.preventDefault(); }}
+              >
+                <span className="replay-handle-label">{endAgo}s</span>
+              </button>
             </div>
           </div>
 
           <div className="replay-summary">
-            <span>
-              {t('replay.wanted', { seconds: wanted })}
-            </span>
+            <span>{t('replay.wanted', { seconds: wanted })}</span>
             <span className={`badge ${wanted >= minimum ? 'ok' : 'err'}`}>
               {wanted >= minimum ? t('replay.wantedOk') : t('replay.wantedTooShort', { minimum })}
             </span>
@@ -202,10 +249,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
             <button
               type="button"
               className="btn ghost"
-              onClick={() => {
-                setFromSeconds(memory);
-                setToSeconds(0);
-              }}
+              onClick={() => { setStartAgo(Math.min(memory, available || memory)); setEndAgo(0); }}
             >
               {t('replay.wholeMemory')}
             </button>
@@ -228,3 +272,4 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
     </div>
   );
 }
+

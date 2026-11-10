@@ -120,6 +120,32 @@ try {
   });
   check('le MP4 sauvegarde est lisible', /duration=\d/.test(probe), probe.trim());
 
+  // --- Onglet Replay : barre de lecture a deux poignees ------------------
+  console.log('\n--- onglet Replay ---');
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('Replay'));
+    if (b) b.click();
+  })()`);
+  await sleep(900);
+  check('l onglet Replay existe', await cdp.evaluate('Boolean(document.querySelector(".replay-timeline"))'));
+  const handles = await cdp.evaluate('document.querySelectorAll(".replay-handle").length');
+  check('deux poignees sont presentes', handles === 2, `${handles} poignee(s)`);
+
+  // Deplacer la poignee de gauche change la duree demandee.
+  const before = await cdp.evaluate('document.querySelector(".replay-summary")?.textContent ?? ""');
+  await cdp.evaluate(`(() => {
+    const bar = document.querySelector('.replay-bar');
+    const handle = document.querySelectorAll('.replay-handle')[0];
+    const rect = bar.getBoundingClientRect();
+    const down = new PointerEvent('pointerdown', { clientX: rect.left + rect.width * 0.5, bubbles: true });
+    handle.dispatchEvent(down);
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: rect.left + rect.width * 0.5, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  })()`);
+  await sleep(400);
+  const after = await cdp.evaluate('document.querySelector(".replay-summary")?.textContent ?? ""');
+  check('deplacer une poignee change la duree', before !== after, `${before} -> ${after}`);
+
   cdp.close();
 } catch (error) {
   console.error('ERREUR :', error.message);

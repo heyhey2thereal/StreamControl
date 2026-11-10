@@ -685,6 +685,11 @@ export class WebPagesServer {
         videoWidth: endpoint.status.videoWidth,
         videoHeight: endpoint.status.videoHeight,
         hls: `/hls/${endpoint.path}/index.m3u8`,
+        // Lecture WebRTC (WHEP) : bien plus proche du direct que le HLS. Le
+        // panneau distant l'essaie en premier, comme la page de lecture du
+        // poste, et retombe sur le HLS si elle n'aboutit pas.
+        webrtc: `/webrtc/${endpoint.path}/`,
+        whep: `/webrtc/${endpoint.path}/whep`,
       })),
       obs: this.obs?.getStatus() ?? null,
       mediamtxRunning: this.isMediamtxRunning(),

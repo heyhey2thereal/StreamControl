@@ -88,6 +88,8 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     playAll: t('remote.playAll'),
     stopAll: t('remote.stopAll'),
     liveEdge: t('remote.liveEdge'),
+    fullscreen: t('remote.fullscreen'),
+    fullscreenUnsupported: t('remote.fullscreenUnsupported'),
     viewers: t('remote.viewers'),
     noPermission: t('remote.noPermission'),
   };
@@ -146,6 +148,13 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
      croire a une diffusion active. */
   .card.offline video { display:none; }
   .card.offline { opacity:.85; }
+  /* Plein ecran : la carte occupe tout l'ecran, l'image prend la place. */
+  .card:fullscreen { border:0; border-radius:0; padding:12px; display:flex;
+                     flex-direction:column; background:#000; }
+  .card:-webkit-full-screen { border:0; border-radius:0; padding:12px; display:flex;
+                              flex-direction:column; background:#000; }
+  .card:fullscreen video, .card:-webkit-full-screen video { flex:1; min-height:0; aspect-ratio:auto; height:auto; }
+  .card:-webkit-full-screen video { flex:1; min-height:0; aspect-ratio:auto; height:auto; }
   .macros { display:flex; gap:9px; flex-wrap:wrap; }
   .macros button { flex:0 1 auto; }
   .center { text-align:center; color:#a8b0b8; padding:70px 20px; }
@@ -294,16 +303,16 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       .catch(function () { setTimeout(function () { poll(id, attempt + 1); }, 2000); });
   }
 
-  // --- Lecture des flux (HLS, hls.js) ------------------------------------
+  // --- Lecture des flux (WebRTC d'abord, puis HLS) ------------------------
   //
   // On ne joue QUE les flux demandes. Lancer tous les flux d'un coup sature
   // le decodeur du navigateur : il finit par mettre la lecture en pause de
   // lui-meme (ou par afficher une image figee), et consomme beaucoup de
   // reseau. Chaque flux reste donc en pause tant qu'on ne l'a pas demande.
   //
-  // Les reglages HLS sont les memes que ceux de la page de lecture du poste
-  // (celle qui « fonctionne bien ») : sans eux, l'image restait en retard et
-  // le « retour au direct » ne rattrapait rien.
+  // On essaie d'abord le WebRTC (WHEP), comme la page de lecture du poste :
+  // c'est ce qui donne une image vraiment au direct, sans les secondes de
+  // retard du HLS. Le HLS ne sert que de secours.
   function loadHlsLibrary(callback) {
     if (window.Hls) { callback(); return; }
     // hls.js est servi par MediaMTX, via notre relais : aucune ressource
@@ -318,11 +327,132 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     document.head.appendChild(script);
   }
 
-  /** Demarre la lecture d'un flux, en restant au plus pres du direct. */
+  /** Demarre la lecture d'un flux : WebRTC (WHEP) d'abord, HLS en secours. */
   function startPlayback(card) {
     var id = card.getAttribute('data-id');
     var video = card.querySelector('video');
     if (!id || !video || playing[id]) return;
+
+    // On reserve la place tout de suite, pour qu'un double clic ne lance pas
+    // deux sessions sur le meme flux.
+    playing[id] = { mode: 'connecting', hls: null, peer: null, resource: null, timer: null, webrtcAttempts: 0 };
+    updatePlayButtons();
+    startWebrtc(card);
+  }
+
+  /**
+   * Lecture WebRTC (WHEP).
+   *
+   * C'est le mode au plus pres du direct : aucun tampon, l'image arrive sous
+   * la seconde. On ne le declare reussi qu'a l'arrivee de la premiere image ;
+   * sinon le HLS prend le relais.
+   */
+  function startWebrtc(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    var entry = playing[id];
+    if (!entry || !video) return;
+    var whep = card.getAttribute('data-whep');
+    if (!whep) { startHls(card); return; }
+
+    entry.mode = 'webrtc';
+    var peer = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+    entry.peer = peer;
+    peer.addTransceiver('video', { direction: 'recvonly' });
+    peer.addTransceiver('audio', { direction: 'recvonly' });
+
+    peer.ontrack = function (event) {
+      // Le tampon de gigue est ce qui ajoute le plus de latence : on demande au
+      // decodeur de ne garder presque rien, comme la page de lecture du poste.
+      try {
+        if ('playoutDelayHint' in event.receiver) event.receiver.playoutDelayHint = 0;
+        if ('jitterBufferTarget' in event.receiver) event.receiver.jitterBufferTarget = 0;
+        if ('jitterBufferDelayHint' in event.receiver) event.receiver.jitterBufferDelayHint = 0;
+      } catch (e) { /* certains navigateurs refusent : sans consequence. */ }
+      video.srcObject = event.streams[0];
+      video.play().catch(function () {});
+      watchWebrtc(card);
+    };
+
+    peer.oniceconnectionstatechange = function () {
+      if (!playing[id] || playing[id].peer !== peer) return;
+      var st = peer.iceConnectionState;
+      if (st === 'failed' || st === 'disconnected' || st === 'closed') {
+        if (video.videoWidth === 0) startHls(card);
+      }
+    };
+
+    peer.createOffer()
+      .then(function (offer) { return peer.setLocalDescription(offer); })
+      .then(function () {
+        return fetch(whep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: peer.localDescription.sdp,
+        });
+      })
+      .then(function (response) {
+        if (!response.ok) throw new Error('WHEP ' + response.status);
+        var location = response.headers.get('Location');
+        if (location) {
+          entry.resource = location.indexOf('http') === 0
+            ? location
+            : card.getAttribute('data-webrtc') + location.replace(/^\\.?\\//, '');
+        }
+        return response.text();
+      })
+      .then(function (answer) {
+        if (!playing[id] || playing[id].peer !== peer) return undefined;
+        return peer.setRemoteDescription({ type: 'answer', sdp: answer });
+      })
+      .then(function () {
+        // Filet de securite : si aucune image n'arrive, le HLS prend le relais.
+        setTimeout(function () {
+          if (playing[id] && playing[id].mode === 'webrtc' && video.videoWidth === 0) startHls(card);
+        }, 8000);
+      })
+      .catch(function () {
+        if (playing[id] && playing[id].mode === 'webrtc') startHls(card);
+      });
+  }
+
+  /**
+   * Surveille l'image WebRTC : si elle se fige, on retombe sur le HLS.
+   *
+   * Une connexion peut etre etablie sans qu'aucune image ne defile (H.264 avec
+   * images B, decodeur qui ne suit pas). On regarde donc l'avancee du temps.
+   */
+  function watchWebrtc(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    var last = -1;
+    var stalls = 0;
+    var timer = setInterval(function () {
+      var entry = playing[id];
+      if (!entry || entry.mode !== 'webrtc') { clearInterval(timer); return; }
+      if (video.paused || video.seeking) return;
+      if (video.currentTime > last + 0.05) { last = video.currentTime; stalls = 0; return; }
+      stalls += 1;
+      if (stalls >= 4) { clearInterval(timer); startHls(card); }
+    }, 1000);
+    var entry = playing[id];
+    if (entry) entry.timer = timer;
+  }
+
+  /** Lecture HLS, en secours du WebRTC. */
+  function startHls(card) {
+    var id = card.getAttribute('data-id');
+    var video = card.querySelector('video');
+    var entry = playing[id];
+    if (!entry || !video || entry.mode === 'hls') return;
+
+    // On coupe une eventuelle session WebRTC avant de passer au HLS.
+    if (entry.peer) { try { entry.peer.close(); } catch (e) {} entry.peer = null; }
+    if (entry.resource) { fetch(entry.resource, { method: 'DELETE' }).catch(function () {}); entry.resource = null; }
+    if (video.srcObject) { try { video.srcObject = null; } catch (e) {} }
+    if (entry.timer) { clearInterval(entry.timer); entry.timer = null; }
+
+    entry.mode = 'hls';
     var src = card.getAttribute('data-hls');
 
     function attach() {
@@ -337,25 +467,16 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       });
       hls.loadSource(src);
       hls.attachMedia(video);
-      playing[id] = { hls: hls, timer: null };
+      entry.hls = hls;
       video.play().catch(function () {});
       // Le direct ne doit pas deriver : des que le lecteur prend du retard sur
-      // la fin du tampon, on le replace au plus pres. C'est ce qui manquait :
-      // sans cela, l'image restait plusieurs secondes en arriere et le
-      // « retour au direct » ne rattrapait rien.
-      var timer = setInterval(function () {
+      // la fin du tampon, on le replace au plus pres.
+      entry.timer = setInterval(function () {
         if (!playing[id] || video.paused || video.buffered.length === 0) return;
         var edge = video.buffered.end(video.buffered.length - 1);
         if (edge - video.currentTime > 1.5) video.currentTime = edge - 0.2;
       }, 2000);
-      playing[id].timer = timer;
-      updatePlayButtons();
     }
-
-    // On reserve la place tout de suite, pour qu'un double clic ne lance pas
-    // deux sessions sur le meme flux.
-    playing[id] = { hls: null, timer: null };
-    updatePlayButtons();
 
     if (window.Hls && window.Hls.isSupported()) {
       attach();
@@ -364,14 +485,13 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       video.src = src;
       video.play().catch(function () {});
     } else {
-      // hls.js n'est pas encore charge : on le charge, puis on attache.
       loadHlsLibrary(function () {
-        if (playing[id]) attach();
+        if (playing[id] && playing[id].mode === 'hls') attach();
       });
     }
   }
 
-  /** Arrete la lecture d'un flux et libere sa session HLS. */
+  /** Arrete la lecture d'un flux et libere sa session (WebRTC et HLS). */
   function stopPlayback(card) {
     var id = card.getAttribute('data-id');
     var video = card.querySelector('video');
@@ -379,9 +499,12 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     if (entry) {
       if (entry.timer) clearInterval(entry.timer);
       if (entry.hls) { try { entry.hls.destroy(); } catch (e) {} }
+      if (entry.peer) { try { entry.peer.close(); } catch (e) {} }
+      if (entry.resource) { fetch(entry.resource, { method: 'DELETE' }).catch(function () {}); }
       delete playing[id];
     }
     if (video) {
+      if (video.srcObject) { try { video.srcObject = null; } catch (e) {} }
       try { video.removeAttribute('src'); video.load(); } catch (e) {}
     }
     updatePlayButtons();
@@ -399,6 +522,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     var id = card.getAttribute('data-id');
     var video = card.querySelector('video');
     var entry = playing[id];
+
+    // En WebRTC, l'image est deja au direct : on ne fait rien.
+    if (entry && entry.mode === 'webrtc') { toast(L.done); return; }
 
     if (video) {
       if (video.buffered.length > 0) {
@@ -425,6 +551,32 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     stopPlayback(card);
     if (id) startPlayback(card);
     toast(L.done);
+  }
+
+  /**
+   * Bascule l'image en plein ecran.
+   *
+   * On passe par l'API Fullscreen du navigateur, sur la carte entiere (et non
+   * sur la balise video) : les commandes restent alors accessibles sur un PC.
+   * La variante webkitRequestFullscreen couvre Safari, encore repandu.
+   */
+  function toggleFullscreen(card) {
+    var target = card;
+    var doc = document;
+    var isFull = doc.fullscreenElement || doc.webkitFullscreenElement;
+    if (isFull) {
+      if (doc.exitFullscreen) doc.exitFullscreen().catch(function () {});
+      else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+      return;
+    }
+    var request = target.requestFullscreen || target.webkitRequestFullscreen;
+    if (!request) { toast(L.fullscreenUnsupported, true); return; }
+    try {
+      var result = request.call(target);
+      if (result && result.catch) result.catch(function () { toast(L.fullscreenUnsupported, true); });
+    } catch (e) {
+      toast(L.fullscreenUnsupported, true);
+    }
   }
 
   /** Met a jour les boutons lecture / direct selon l'etat reel. */
@@ -608,6 +760,8 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   /** Met a jour une carte existante, sans toucher a la balise video. */
   function syncCard(card, s) {
     card.setAttribute('data-hls', s.hls || '');
+    card.setAttribute('data-webrtc', s.webrtc || '');
+    card.setAttribute('data-whep', s.whep || '');
     var playable = isPlayable(s);
     card.classList.toggle('offline', !playable);
 
@@ -631,6 +785,7 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     if (playable) {
       actions += '<button data-play>' + L.watch + '</button>';
       actions += '<button data-live>' + L.liveEdge + '</button>';
+      actions += '<button data-full>' + L.fullscreen + '</button>';
     }
     if (PERMISSIONS.download && playable) {
       // Le debit de la source est transmis au MediaRecorder : il enregistre
@@ -776,6 +931,7 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       return;
     }
     if (button.hasAttribute('data-live')) { jumpToLive(card); return; }
+    if (button.hasAttribute('data-full')) { toggleFullscreen(card); return; }
     if (button.hasAttribute('data-dl')) {
       // Enregistrer suppose que l'image defile : si le flux n'est pas en
       // lecture, on la demarre, sinon la capture serait vide (image figee).

@@ -7,11 +7,12 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 
 ## Nouveautés
 
-- **Nouvel onglet Replay.** Un espace dédié pour récupérer un extrait du direct :
-  choisissez le **flux**, puis la **plage** (« de N secondes en arrière jusqu'à M
-  secondes en arrière », 0 = la toute dernière seconde), et sauvegardez. Un
-  fichier **MP4** est créé dans le dossier des replays. La durée réelle produite
-  est indiquée.
+- **Nouvel onglet Replay, avec barre de lecture.** Un espace dédié pour
+  récupérer un extrait du direct. Une **barre de lecture** montre la mémoire
+  disponible et **avance toute seule** au rythme du direct. Deux **poignées**
+  s'y déplacent : celle de **gauche** fixe le **début** de l'extrait, celle de
+  **droite** la **fin**. La durée choisie s'affiche en clair, et un fichier
+  **MP4** est créé dans le dossier des replays.
 
 - **Mémoire et minimum configurables.** Dans Paramètres > Replay, vous réglez
   combien de secondes de chaque flux sont mémorisées (60 s par défaut), la durée
@@ -45,10 +46,13 @@ Disponible sur **Windows**, **macOS** et **Linux**.
   ré-encodait au-delà de la source. Le débit de la source est maintenant
   transmis : l'enregistrement se fait au même débit.
 
-- **Décalage et « retour au direct » inefficace (panneau distant PC et mobile).**
-  Les lecteurs n'avaient pas les réglages de la page de lecture du poste. Ils les
-  ont maintenant (faible latence, correction de latence), et le bouton « Retour
-  au direct » rattrape réellement le retard en visant la fin du tampon chargé.
+- **Décalage du panneau distant (PC et mobile).** Le panneau distant ne lisait
+  qu'en HLS, d'où le retard. Il essaie désormais le **WebRTC d'abord** (image
+  sous la seconde, comme la page de lecture du poste), et ne retombe sur le HLS
+  qu'en secours. Le bouton « Retour au direct » rattrape réellement le retard.
+
+- **Plein écran du panneau distant.** Nouveau bouton par flux : l'image passe
+  en plein écran, avec ses commandes.
 
 ---
 
@@ -57,7 +61,7 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 ### Ajoutés
 | Fichier | Rôle |
 |---|---|
-| `src/renderer/views/ReplayView.tsx` | Nouvel onglet Replay : choix du flux et de la plage |
+| `src/renderer/views/ReplayView.tsx` | Onglet Replay : barre de lecture à deux poignées, choix du flux |
 | `CHANGELOG-2.0.2.md` | Journal détaillé de cette version |
 
 ### Modifiés
@@ -69,9 +73,9 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 | `src/main/settings.ts` | Réglages replay (mémoire, minimum, dossier), scène (écran « pas de flux ») |
 | `src/main/obs-controller.ts` | Paramètre unique par source, rechargement, résolution par cellule, activation par flux |
 | `src/main/player-page.ts` | Écran « pas de flux » (noir / message personnalisé) |
-| `src/main/web-pages.ts` | Fournit l'écran « pas de flux » aux cellules de scène |
+| `src/main/web-pages.ts` | Écran « pas de flux » ; URL WebRTC/WHEP dans l'état distant |
 | `src/main/main.ts` | Résolution des variables du message |
-| `src/main/remote-desktop-page.ts` | Réglages HLS, correction de latence, retour au direct, débit d'enregistrement |
+| `src/main/remote-desktop-page.ts` | Lecture WebRTC d'abord, correction de latence, retour au direct, plein écran, débit d'enregistrement |
 | `src/main/remote-page.ts` | Retour au direct, débit d'enregistrement |
 | `src/shared/types.ts` | `SceneDisplaySettings`, `ReplayResult`, `ReplayState` |
 | `src/shared/channels.ts` | Canaux replay |
