@@ -95,6 +95,14 @@ try {
   // Reconnecte pour verifier l'affichage des scenes.
   await c.evaluate('window.streamcontrol.obsConnect()');
   await harnessSleep(800);
+  // Les scenes vivent dans leur propre sous-onglet : on l'ouvre, comme
+  // l'utilisateur. L'onglet OBS ne montre plus tout empile a la fois.
+  await c.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.subtab')].find((x) => /Scenes/i.test(x.textContent));
+    if (b) b.click();
+  })()`);
+  await harnessSleep(400);
+  check('un sous-onglet Scenes existe', await c.evaluate(`Boolean([...document.querySelectorAll('.subtab')].find((x) => /Scenes/i.test(x.textContent)))`));
   // Les scenes sont desormais des cartes cliquables.
   const sceneButtons = await c.evaluate('document.querySelectorAll(".scene-card:not(.new)").length');
   check('boutons de scene rendus dans l interface', sceneButtons === 3, `${sceneButtons} boutons`);
@@ -169,26 +177,62 @@ try {
   check('elle apparait dans OBS', obsServer.state.scenes.includes('Scene grille'));
 
   const configured = await c.evaluate(
-    `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify(twoIds)})`,
+    `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify(twoIds.map((id) => ({ id })))})`,
   );
   check('la scene est configuree', configured.ok === true, configured.message);
   const names = Object.keys(obsServer.state.inputs).filter((n) => n.startsWith('StreamControl - '));
   check('une source par flux', names.length === 2, names.join(', '));
   const urls = Object.values(obsServer.state.inputs).map((i) => i.inputSettings?.url ?? '');
   check('chaque source pointe sur /embed', urls.every((u) => /\/embed\//.test(u)), urls.join(' | '));
+  // Chaque source porte un parametre unique : sans lui, deux sources de meme
+  // origine peuvent partager le cache du navigateur d'OBS, et une cellule
+  // affichait l'image d'une autre.
+  check(
+    'chaque source porte un parametre unique',
+    urls.every((u) => /[?&]src=/.test(u)) && new Set(urls).size === urls.length,
+    urls.join(' | '),
+  );
 
   // Deux flux cote a cote : le deuxieme commence a la moitie de la largeur.
   const transforms = obsServer.state.transforms;
   check('deux flux sont repartis cote a cote', transforms.at(-2)?.positionX === 0 && transforms.at(-1)?.positionX === 960,
     JSON.stringify(transforms.slice(-2).map((t) => t.positionX)));
 
+  // Chaque source recoit la resolution de SA CELLULE, pas du canevas : OBS
+  // doit recevoir le bon format pour chaque flux de la grille.
+  const gridSources = Object.values(obsServer.state.inputs).filter((i) =>
+    String(i.inputSettings?.url ?? '').includes('/embed/'),
+  );
+  check(
+    'chaque source recoit la resolution de sa cellule',
+    gridSources.length >= 2 && gridSources.every((i) => i.inputSettings?.width === 960 && i.inputSettings?.height === 1080),
+    JSON.stringify(gridSources.map((i) => `${i.inputSettings?.width}x${i.inputSettings?.height}`)),
+  );
+
   // Une seule adresse : plein cadre.
   const single = await c.evaluate(
-    `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify([twoIds[0]])})`,
+    `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify([{ id: twoIds[0] }])})`,
   );
   check('on peut reduire a un seul flux', single.ok === true, single.message);
   const remaining = Object.keys(obsServer.state.inputs).filter((n) => n.startsWith('StreamControl - '));
   check('la source en trop est retiree de la scene', remaining.length === 2, `sources creees : ${remaining.length}`);
+
+  // --- 7c. Desactiver un flux : sa cellule devient noire ------------------
+  // Le flux reste dans la scene, mais sa source est masquee dans OBS.
+  console.log('\n--- flux desactive ---');
+  const disabled = await c.evaluate(
+    `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify([
+      { id: twoIds[0], enabled: true },
+      { id: twoIds[1], enabled: false },
+    ])})`,
+  );
+  check('la scene accepte un flux desactive', disabled.ok === true, disabled.message);
+  const enabledStates = Object.values(obsServer.state.sceneItemEnabled);
+  check(
+    'le flux desactive est masque dans OBS',
+    enabledStates.includes(false) && enabledStates.includes(true),
+    JSON.stringify(enabledStates),
+  );
 
   // --- 8. Mode studio : preparer puis diffuser sans toucher a OBS ---------
   console.log('\n--- mode studio ---');
@@ -210,6 +254,49 @@ try {
 
   const studioOff = await c.evaluate('window.streamcontrol.obsSetStudioMode(false)');
   check('le mode studio se desactive', studioOff.studioMode === false);
+
+  // --- 9. « Appliquer et diffuser » ne coupe pas un direct en cours -------
+  // Le defaut corrige : ce bouton basculait la diffusion (toggle). Quand OBS
+  // diffusait deja, il l'ARRETAIT donc, au lieu de garder le direct.
+  console.log('\n--- appliquer et diffuser pendant un direct ---');
+  // On s'assure que la diffusion tourne.
+  await c.evaluate('window.streamcontrol.obsUseStreamControl()');
+  await harnessSleep(300);
+  const already = await c.evaluate('window.streamcontrol.obsGetStatus()');
+  if (!already.streaming) await c.evaluate('window.streamcontrol.obsToggleStreaming()');
+  await harnessSleep(600);
+  check('la diffusion tourne avant le test', obsServer.state.streaming === true, String(obsServer.state.streaming));
+
+  const stopCallsBefore = obsServer.state.requests.filter((r) => r === 'StopStream').length;
+  // On passe par le bouton reel de l'editeur de scene.
+  await c.evaluate(`(() => {
+    const card = document.querySelector('.scene-card:not(.new)');
+    if (card) card.click();
+  })()`);
+  await harnessSleep(500);
+  await c.evaluate(`(() => {
+    const item = document.querySelector('.scene-editor .pick-item');
+    if (item) item.click();
+  })()`);
+  await harnessSleep(300);
+  await c.evaluate(`(() => {
+    const b = [...document.querySelectorAll('.scene-editor button')].find((x) => /Appliquer et diffuser/i.test(x.textContent));
+    if (b) b.click();
+  })()`);
+  await harnessSleep(1200);
+  const stopCallsAfter = obsServer.state.requests.filter((r) => r === 'StopStream').length;
+  check(
+    'appliquer et diffuser ne coupe pas le direct',
+    obsServer.state.streaming === true,
+    `streaming=${obsServer.state.streaming}`,
+  );
+  check(
+    'aucun StopStream n a ete envoye',
+    stopCallsAfter === stopCallsBefore,
+    `${stopCallsBefore} -> ${stopCallsAfter}`,
+  );
+  // On arrete proprement la diffusion pour ne pas perturber la suite.
+  await c.evaluate('window.streamcontrol.obsToggleStreaming()');
 
   c.close();
 } catch (e) {

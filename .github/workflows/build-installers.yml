@@ -205,30 +205,35 @@ jobs:
 
       # Le journal est joint meme si une etape precedente a echoue : c'est
       # precisement dans ce cas qu'il est le plus utile.
+      #
+      # `continue-on-error` : le quota d'artefacts GitHub peut etre sature
+      # (chaque build produit plusieurs centaines de Mo). Un upload refuse ne
+      # doit PAS empecher la publication de la Release, qui est le livrable
+      # utile ; les artefacts, eux, sont redondants avec elle.
       - name: Publier le journal comme artefact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ matrix.platform }}
           path: ${{ env.STREAMCONTROL_BUILD_LOG }}
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 30
 
       - name: Publier l'installateur comme artefact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.files }}
-          if-no-files-found: error
-          retention-days: 30
+          if-no-files-found: warn
+          retention-days: 15
 
       - name: Publier la Release GitHub
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: StreamControl ${{ github.ref_name }}
-          # Brouillon : une version se publie apres verification (relire les
-          # notes, confirmer les installateurs), jamais automatiquement.
           draft: true
           # Le corps de la note est redige par scripts/changelog.mjs : un vrai
           # journal des modifications classe par nature, et non un lien de
@@ -236,10 +241,16 @@ jobs:
           body_path: release-notes.md
           # Le journal de compilation accompagne toujours la Release : on peut
           # donc verifier ce qui a ete compile sans acces a la CI.
+          #
+          # `release-notes.md` n'est joint QUE par la plateforme Windows. Les
+          # trois jobs s'executent en parallele : quand chacun le re-televerse,
+          # l'un supprime l'asset pendant qu'un autre tente la meme suppression,
+          # ce qui renvoie un 404 et fait echouer le job. Le corps de la Release
+          # porte de toute facon ces notes, jointes ici pour le telechargement.
           files: |
             ${{ matrix.files }}
             ${{ env.STREAMCONTROL_BUILD_LOG }}
-            release-notes.md
+            ${{ matrix.platform == 'win32' && 'release-notes.md' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

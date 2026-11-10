@@ -31,6 +31,19 @@ export interface PlayerPageOptions {
    * commandes ni cadre.
    */
   compact?: boolean;
+  /**
+   * Ce qu'afficher quand le flux ne publie pas (cellule de scene OBS).
+   *
+   * Absent : le comportement d'origine (message d'attente). Fourni : le mode
+   * choisi (ecran noir, ou message personnalise avec variables resolues).
+   */
+  offline?: {
+    mode: 'black' | 'message';
+    text: string;
+    spinner: boolean;
+    textColor: string;
+    background: string;
+  };
 }
 
 /** Echappe le texte insere dans le HTML. */
@@ -110,7 +123,17 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
     width:100%; height:100%; max-width:none; background:#000;
     border:0; border-radius:0; overflow:hidden; position:relative;
   }
-  video { width:100%; height:100%; display:block; background:#000; }
+  /* object-fit: contain est indispensable : sans lui, une camera dont l'image
+     n'est pas exactement au rapport du cadre (4/3, 16/10...) est ETIREE pour le
+     remplir, donc deformee. C'est ce qui « ecrasait » le format, en particulier
+     dans la grille OBS ou chaque flux occupe une cellule. */
+  video { width:100%; height:100%; display:block; background:#000; object-fit:contain; }
+  /* Mode « ecran noir » d'une cellule de scene : tout est masque, il ne reste
+     que le fond. Aucun texte ne doit apparaitre dans la cellule OBS. */
+  body.offline-black header,
+  body.offline-black footer,
+  body.offline-black main { display:none; }
+  body.offline-black { background:#000; }
   .overlay {
     position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
     align-items:center; justify-content:center; text-align:center; padding:24px;
@@ -168,6 +191,10 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
 
   var PATH = ${JSON.stringify(options.path)};
   var T = ${JSON.stringify(strings)};
+  // Ce qu'afficher quand le flux ne publie pas. La valeur null correspond au
+  // comportement par defaut (message d'attente de StreamControl). Fourni :
+  // ecran noir ou message personnalise, pour les cellules de scene OBS.
+  var OFFLINE = ${JSON.stringify(options.offline ?? null)};
 
   // Tout passe par notre serveur : les ports HTTP de MediaMTX n'ecoutent que
   // sur la boucle locale, donc rien ne doit pointer directement dessus.
@@ -214,7 +241,50 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
     spinner.className = spinning === 'slow' ? 'spinner slow' : 'spinner';
   }
 
+  /**
+   * Ecran affiche quand le flux ne publie pas, selon le reglage du poste.
+   *
+   * Deux modes, destines aux cellules de scene OBS :
+   * - « black » : un fond noir, rien d'autre. L'operateur garde une image
+   *   propre, sans texte parasite ;
+   * - « message » : le texte choisi (variables deja resolues cote serveur),
+   *   avec un fond et une couleur de texte reglables, et un anneau de
+   *   chargement optionnel.
+   *
+   * Renvoie true si un ecran personnalise a ete applique (l'appelant n'affiche
+   * alors pas son propre message d'attente).
+   */
+  function showOffline() {
+    if (!OFFLINE) return false;
+    document.body.style.background = OFFLINE.background || '#000000';
+    if (OFFLINE.mode === 'black') {
+      // Ecran noir : on masque tout le contenu, y compris l'en-tete et le
+      // pied de page, pour qu'aucun texte n'apparaisse dans la cellule.
+      overlay.classList.add('hidden');
+      document.body.classList.add('offline-black');
+      dot.classList.remove('live');
+      stats.textContent = '';
+      return true;
+    }
+    // Mode message : fond et couleur choisis, texte et anneau eventuels.
+    document.body.classList.remove('offline-black');
+    overlay.classList.remove('hidden');
+    dot.classList.remove('live');
+    title.textContent = '';
+    title.style.color = OFFLINE.textColor || '#e9ecef';
+    detail.style.color = OFFLINE.textColor || '#e9ecef';
+    detail.textContent = OFFLINE.text || '';
+    spinner.style.display = OFFLINE.spinner ? '' : 'none';
+    spinner.className = 'spinner slow';
+    stats.textContent = T.offline;
+    return true;
+  }
+
   function hide() {
+    // Le flux publie : on efface un eventuel ecran noir et on remet les
+    // couleurs normales, sinon le fond personnalise resterait.
+    document.body.classList.remove('offline-black');
+    document.body.style.background = '';
     overlay.classList.add('hidden');
     dot.classList.add('live');
   }
@@ -514,6 +584,14 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
   function waitForStream(reason) {
     stop();
     attempts += 1;
+    // Reglage du poste : ecran noir ou message personnalise pour une cellule de
+    // scene. Si un ecran personnalise est applique, on n'affiche pas le message
+    // d'attente de StreamControl.
+    if (showOffline()) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, 2000);
+      return;
+    }
     var heading = attempts > 3 ? T.waiting : T.connecting;
     var text = reason
       ? reason + '<br>' + T.retry
@@ -548,6 +626,12 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
           return;
         }
 
+        // Le flux existe mais ne publie pas : c'est le cas d'une cellule de
+        // scene. On applique l'ecran choisi, sinon le message d'attente.
+        if (showOffline()) {
+          pollTimer = setTimeout(poll, 2000);
+          return;
+        }
         show(T.waiting,
           T.waitingHint + ' <code>rtmp://' + location.hostname + '/...</code>.<br>' +
           T.imageAppears, 'slow');

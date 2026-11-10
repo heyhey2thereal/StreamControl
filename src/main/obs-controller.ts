@@ -310,6 +310,9 @@ export class ObsController extends EventEmitter {
         transitions,
         currentTransition,
         transitionDurationMs,
+        // Les sources sont relues ici : l'editeur de macros les propose, et
+        // une source ajoutee dans OBS apparait sans redemarrer StreamControl.
+        sources: await this.listSources(),
         error: undefined,
       };
     } catch (error) {
@@ -541,7 +544,7 @@ export class ObsController extends EventEmitter {
    */
   async configureScene(
     sceneName: string,
-    sources: Array<{ name: string; url: string }>,
+    sources: Array<{ name: string; url: string; enabled?: boolean }>,
   ): Promise<{ ok: boolean; message: string }> {
     if (this.client.getState() !== 'connected') {
       return { ok: false, message: "Connectez-vous a OBS avant de configurer une scene." };
@@ -574,12 +577,28 @@ export class ObsController extends EventEmitter {
         const entry = kept[index];
         const inputName = `${ObsController.SOURCE_PREFIX}${entry.name}`;
         const cell = cells[index];
+        // Une adresse desactivee reste dans la scene, mais sa source est
+        // masquee : la cellule apparait alors NOIRE, sans image ni texte.
+        const enabled = entry.enabled !== false;
+        // La source navigateur est creee a la taille de SA CELLULE, pas du
+        // canevas : OBS recoit donc la bonne resolution pour chaque flux. La
+        // rendre a la taille du canevas puis la reduire faisait rendre la page
+        // en pleine definition avant de l'ecraser dans la cellule.
+        //
+        // L'adresse porte un parametre unique (`?src=<nom>`). Sans lui, deux
+        // sources de meme origine peuvent partager le cache du navigateur
+        // embarque d'OBS : une cellule affichait alors l'image d'une autre.
+        const sourceUrl = `${entry.url}${entry.url.includes('?') ? '&' : '?'}src=${encodeURIComponent(entry.name)}`;
         const inputSettings = {
-          url: entry.url,
-          width,
-          height,
+          url: sourceUrl,
+          width: cell.width,
+          height: cell.height,
+          // La source reste chargee meme quand la scene n'est pas visible : le
+          // flux est deja pret quand on bascule dessus.
           shutdown: false,
-          restart_when_active: false,
+          // Recharger la page quand la scene devient active : la lecture
+          // repart proprement au lieu de reprendre un tampon figé.
+          restart_when_active: true,
         };
 
         if (await this.inputExists(inputName)) {
@@ -590,11 +609,21 @@ export class ObsController extends EventEmitter {
             inputName,
             inputKind: 'browser_source',
             inputSettings,
-            sceneItemEnabled: true,
+            sceneItemEnabled: enabled,
           });
         }
 
         const sceneItemId = await this.ensureSceneItem(sceneName, inputName);
+
+        // Activer ou masquer la source selon la demande : une source masquee
+        // laisse un ecran NOIR dans sa cellule.
+        if (typeof sceneItemId === 'number') {
+          await this.client.request('SetSceneItemEnabled', {
+            sceneName,
+            sceneItemId,
+            sceneItemEnabled: enabled,
+          });
+        }
 
         // On dimensionne par « bounds » plutot qu'en echelle : la source garde
         // son rapport, donc l'image n'est pas deformee, et la cellule est
@@ -750,6 +779,88 @@ export class ObsController extends EventEmitter {
       // En cas de doute, on tente la creation : un refus est rattrape.
       return false;
     }
+  }
+
+  // --- Actions pour les macros -------------------------------------------
+
+  /** Supprime une scene OBS. */
+  async removeScene(sceneName: string): Promise<void> {
+    await this.client.request('RemoveScene', { sceneName });
+    await this.refresh();
+  }
+
+  /** Renomme une scene OBS. */
+  async renameScene(from: string, to: string): Promise<void> {
+    await this.client.request('SetSceneName', { sceneName: from, newSceneName: to });
+    await this.refresh();
+  }
+
+  /**
+   * Affiche ou masque une source dans la scene programme.
+   *
+   * OBS identifie une source par un numero DANS la scene : il faut donc le
+   * resoudre d'abord, ce que fait `GetSceneItemId`.
+   */
+  async setSourceVisible(sourceName: string, visible: boolean): Promise<void> {
+    const scene = this.status.currentScene;
+    if (!scene) throw new Error('Aucune scene active dans OBS.');
+    const item = await this.client.request<{ sceneItemId?: number }>('GetSceneItemId', {
+      sceneName: scene,
+      sourceName,
+    });
+    if (item.sceneItemId === undefined) throw new Error(`Source « ${sourceName} » introuvable.`);
+    await this.client.request('SetSceneItemEnabled', {
+      sceneName: scene,
+      sceneItemId: item.sceneItemId,
+      sceneItemEnabled: visible,
+    });
+  }
+
+  /** Active ou coupe le son d'une source. */
+  async setSourceMuted(sourceName: string, muted: boolean): Promise<void> {
+    await this.client.request('SetInputMute', { inputName: sourceName, inputMuted: muted });
+  }
+
+  /** Regle le volume d'une source, de 0 a 100. */
+  async setSourceVolume(sourceName: string, volume: number): Promise<void> {
+    // OBS exprime le volume en decibels, avec un facteur multiplicatif.
+    // La conversion lineaire est celle de l'interface d'OBS.
+    const ratio = Math.max(0, Math.min(100, volume)) / 100;
+    const db = ratio <= 0 ? -100 : 20 * Math.log10(ratio);
+    await this.client.request('SetInputVolume', { inputName: sourceName, inputVolumeDb: db });
+  }
+
+  /** Noms des sources connues d'OBS, pour l'editeur de macros. */
+  async listSources(): Promise<string[]> {
+    try {
+      const list = await this.client.request<{ inputs?: Array<{ inputName?: string }> }>('GetInputList');
+      return (list.inputs ?? [])
+        .map((input) => input.inputName)
+        .filter((name): name is string => Boolean(name));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Met l'enregistrement en pause, s'il tourne. */
+  async pauseRecording(): Promise<void> {
+    await this.client.request('PauseRecord');
+    await this.refresh();
+  }
+
+  /** Reprend l'enregistrement en pause. */
+  async resumeRecording(): Promise<void> {
+    await this.client.request('ResumeRecord');
+    await this.refresh();
+  }
+
+  /**
+   * Decoupe l'enregistrement : le fichier en cours est clos, un nouveau
+   * demarre. Utile pour separer les sequences d'un evenement.
+   */
+  async splitRecording(): Promise<void> {
+    await this.client.request('SplitRecordFile');
+    await this.refresh();
   }
 
   /** Indique si le fichier de configuration d'OBS existe (installation reelle). */

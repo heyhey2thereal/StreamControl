@@ -21,11 +21,16 @@ const STEPS: Step[] = [
   { target: '.status-strip', title: 'tour.statusTitle', body: 'tour.statusBody' },
   { target: '[data-tour="nav-streams"]', title: 'tour.streamsTitle', body: 'tour.streamsBody' },
   { target: '[data-tour="nav-urls"]', title: 'tour.urlsTitle', body: 'tour.urlsBody' },
+  { target: '[data-tour="nav-services"]', title: 'tour.servicesTitle', body: 'tour.servicesBody' },
   { target: '[data-tour="nav-obs"]', title: 'tour.obsTitle', body: 'tour.obsBody' },
+  { target: '[data-tour="nav-automation"]', title: 'tour.automationTitle', body: 'tour.automationBody' },
+  { target: '[data-tour="nav-remote"]', title: 'tour.remoteTitle', body: 'tour.remoteBody' },
+  { target: '[data-tour="nav-analysis"]', title: 'tour.analysisTitle', body: 'tour.analysisBody' },
   { target: '[data-tour="nav-logs"]', title: 'tour.logsTitle', body: 'tour.logsBody' },
-  { target: '[data-tour="nav-faq"]', title: 'tour.faqTitle', body: 'tour.faqBody' },
   { target: '.lock-button', title: 'tour.lockTitle', body: 'tour.lockBody' },
   { target: '[data-tour="nav-settings"]', title: 'tour.settingsTitle', body: 'tour.settingsBody' },
+  { target: '[data-tour="nav-guide"]', title: 'tour.guideTitle', body: 'tour.guideBody' },
+  { target: '[data-tour="nav-faq"]', title: 'tour.faqTitle', body: 'tour.faqBody' },
 ];
 
 /** Rectangle d'un element, en coordonnees fenetre. */

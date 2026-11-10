@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import logo from './assets/logo.png';
 import { Spinner } from './components/Spinner';
-import { Toasts } from './components/Toasts';
+import { MacroToasts, Toasts } from './components/Toasts';
 import { LockScreen } from './components/LockScreen';
+import { LockDialog } from './components/LockDialog';
+import { RemoteApprovalDialog } from './components/RemoteApprovalDialog';
+import { Icon, type IconName } from './components/Icon';
 import { Onboarding } from './components/Onboarding';
 import { UpdateDialog } from './components/UpdateDialog';
 import { TranslationProvider, useTranslation } from './hooks/useTranslation';
@@ -13,6 +16,10 @@ import { FaqView } from './views/FaqView';
 import { GuideView } from './views/GuideView';
 import { LogsView } from './views/LogsView';
 import { ObsView } from './views/ObsView';
+import { AutomationView } from './views/AutomationView';
+import { RemoteView } from './views/RemoteView';
+import { ReplayView } from './views/ReplayView';
+import { AnalysisView } from './views/AnalysisView';
 import { ServicesView } from './views/ServicesView';
 import { StreamsView } from './views/StreamsView';
 import { SettingsView } from './views/SettingsView';
@@ -25,21 +32,29 @@ type ViewId =
   | 'services'
   | 'urls'
   | 'obs'
+  | 'automation'
+  | 'replay'
+  | 'remote'
+  | 'analysis'
   | 'logs'
   | 'settings'
   | 'guide'
   | 'faq';
 
-const NAV: Array<{ id: ViewId; icon: string; label: TranslationKey }> = [
-  { id: 'dashboard', icon: '\u25A3', label: 'nav.dashboard' },
-  { id: 'streams', icon: '\u25B6', label: 'nav.streams' },
-  { id: 'services', icon: '\u2699', label: 'nav.services' },
-  { id: 'urls', icon: '\u26A1', label: 'nav.urls' },
-  { id: 'obs', icon: '\u25CF', label: 'nav.obs' },
-  { id: 'logs', icon: '\u2263', label: 'nav.logs' },
-  { id: 'settings', icon: '\u2692', label: 'nav.settings' },
-  { id: 'guide', icon: '\u2139', label: 'nav.guide' },
-  { id: 'faq', icon: '\u003F', label: 'nav.faq' },
+const NAV: Array<{ id: ViewId; icon: IconName; label: TranslationKey }> = [
+  { id: 'dashboard', icon: 'dashboard', label: 'nav.dashboard' },
+  { id: 'streams', icon: 'streams', label: 'nav.streams' },
+  { id: 'services', icon: 'services', label: 'nav.services' },
+  { id: 'urls', icon: 'urls', label: 'nav.urls' },
+  { id: 'obs', icon: 'obs', label: 'nav.obs' },
+  { id: 'automation', icon: 'macros', label: 'nav.automation' },
+  { id: 'replay', icon: 'replay', label: 'nav.replay' },
+  { id: 'remote', icon: 'remote', label: 'nav.remote' },
+  { id: 'analysis', icon: 'analysis', label: 'nav.analysis' },
+  { id: 'logs', icon: 'logs', label: 'nav.logs' },
+  { id: 'settings', icon: 'settings', label: 'nav.settings' },
+  { id: 'guide', icon: 'guide', label: 'nav.guide' },
+  { id: 'faq', icon: 'faq', label: 'nav.faq' },
 ];
 
 /**
@@ -61,6 +76,8 @@ export default function App() {
 function Shell({ sc }: { sc: StreamControl }) {
   const { t } = useTranslation();
   const [view, setView] = useState<ViewId>('dashboard');
+  /** Pop-up de verrouillage : le bouton « Verrouiller » l'ouvre directement. */
+  const [lockDialogOpen, setLockDialogOpen] = useState(false);
 
   /**
    * Raccourcis clavier globaux.
@@ -92,7 +109,10 @@ function Shell({ sc }: { sc: StreamControl }) {
         }
       }
 
-      if (event.key === 'Escape') sc.dismissUpdate();
+      // Echap ne ferme la mise a jour que si sa fenetre est reellement
+      // ouverte. Sans ce garde, appuyer sur Echap n'importe ou retirait le
+      // badge « mise a jour disponible » de la barre laterale.
+      if (event.key === 'Escape' && document.querySelector('.update-modal')) sc.dismissUpdate();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -137,6 +157,7 @@ function Shell({ sc }: { sc: StreamControl }) {
     (entry) => entry.level === 'error' && entry.id > sc.seenLogErrors,
   ).length;
   const liveCount = sc.streams.filter((endpoint) => endpoint.status.publishing).length;
+  const pendingAlerts = sc.alerts.filter((alert) => !alert.acknowledged).length;
 
   return (
     <div className="app">
@@ -162,7 +183,9 @@ function Shell({ sc }: { sc: StreamControl }) {
               }}
               style={{ width: '100%' }}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon">
+                <Icon name={item.icon} />
+              </span>
               <span>{t(item.label)}</span>
               {item.id === 'logs' && errorCount > 0 ? (
                 <span className="badge err" style={{ marginLeft: 'auto' }}>
@@ -178,7 +201,7 @@ function Shell({ sc }: { sc: StreamControl }) {
             <button
               type="button"
               className="update-badge"
-              onClick={() => void sc.checkUpdate(true)}
+              onClick={() => sc.openUpdate()}
               title={t('update.title')}
             >
               <span className="dot-ping" aria-hidden />
@@ -189,11 +212,13 @@ function Shell({ sc }: { sc: StreamControl }) {
             type="button"
             className="lock-button"
             onClick={() => {
+              // Avec un mot de passe defini, le poste se verrouille aussitot ;
+              // sinon, la pop-up permet de le definir et de verrouiller.
               if (sc.lock.hasPassword) void sc.lockNow();
-              else setView('settings');
+              else setLockDialogOpen(true);
             }}
           >
-            <span aria-hidden>&#128274;</span>
+            <Icon name={sc.lock.hasPassword ? 'lock' : 'lockOpen'} size={16} />
             {sc.lock.hasPassword ? t('lock.lockNow') : t('lock.define')}
           </button>
           <div className="sidebar-meta">Version {sc.appVersion}</div>
@@ -211,6 +236,19 @@ function Shell({ sc }: { sc: StreamControl }) {
             OBS {sc.obs.connected ? t('state.connected') : t('state.offline')}
           </span>
           {liveCount > 0 ? <span className="pill live">{liveCount} {t('state.live')}</span> : null}
+          {/* Alertes de surveillance : visibles depuis n'importe quel onglet,
+              pour qu'un probleme ne passe pas inapercu pendant un evenement. */}
+          {pendingAlerts > 0 ? (
+            <button
+              type="button"
+              className="pill err"
+              onClick={() => setView('analysis')}
+              title={t('watch.title')}
+            >
+              <span className="led err" aria-hidden />
+              {pendingAlerts} {t('watch.alertCount')}
+            </button>
+          ) : null}
         </div>
 
         {sc.fatalError ? (
@@ -229,14 +267,23 @@ function Shell({ sc }: { sc: StreamControl }) {
         {view === 'services' ? <ServicesView sc={sc} /> : null}
         {view === 'urls' ? <UrlsView sc={sc} /> : null}
         {view === 'obs' ? <ObsView sc={sc} /> : null}
+        {view === 'automation' ? <AutomationView sc={sc} /> : null}
+        {view === 'replay' ? <ReplayView sc={sc} /> : null}
+        {view === 'remote' ? <RemoteView sc={sc} /> : null}
+        {view === 'analysis' ? <AnalysisView sc={sc} /> : null}
         {view === 'logs' ? <LogsView sc={sc} /> : null}
-        {view === 'settings' ? <SettingsView sc={sc} /> : null}
+        {view === 'settings' ? <SettingsView sc={sc} onOpenLock={() => setLockDialogOpen(true)} /> : null}
         {view === 'guide' ? <GuideView sc={sc} /> : null}
         {view === 'faq' ? <FaqView /> : null}
       </main>
 
       <Toasts notices={sc.notices} onDismiss={sc.dismissNotice} />
+      {/* Les bulles de macro vivent en bas a gauche : elles ne se melangent pas
+          aux notifications de l'application. */}
+      <MacroToasts notices={sc.macroNotices} onDismiss={sc.dismissMacroNotice} />
       <UpdateDialog sc={sc} />
+      {lockDialogOpen ? <LockDialog sc={sc} onClose={() => setLockDialogOpen(false)} /> : null}
+      <RemoteApprovalDialog />
       {sc.onboarding ? <Onboarding onFinish={() => void sc.finishOnboarding()} /> : null}
     </div>
   );

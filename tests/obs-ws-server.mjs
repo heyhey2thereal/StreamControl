@@ -33,6 +33,8 @@ export function startObsServer({ password = '', port = 0 } = {}) {
     transforms: [],
     /** Sources reellement presentes dans une scene (nom -> scene). */
     sceneItems: {},
+    /** Etat active/masque d'un element de scene (« scene/itemId » -> booleen). */
+    sceneItemEnabled: {},
     /** Serveur et cle de diffusion courants. */
     streamService: { server: '', key: '' },
     /** Mode studio : scene en attente et transitions. */
@@ -128,6 +130,14 @@ export function startObsServer({ password = '', port = 0 } = {}) {
                 .map(([sourceName], index) => ({ sourceName, sceneItemId: index + 1 })),
             });
             break;
+          case 'SetSceneItemEnabled': {
+            // Suit l'etat active/masque de chaque element : une source masquee
+            // laisse une cellule noire.
+            const key = msg.d.requestData.sceneName + '/' + msg.d.requestData.sceneItemId;
+            state.sceneItemEnabled[key] = msg.d.requestData.sceneItemEnabled === true;
+            reply({});
+            break;
+          }
           case 'RemoveSceneItem': {
             const entry = Object.entries(state.sceneItems).find(
               ([, scene]) => scene === msg.d.requestData.sceneName,

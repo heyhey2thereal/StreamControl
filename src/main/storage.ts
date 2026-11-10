@@ -8,6 +8,7 @@
 import { app } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { resolveRecordingDir } from './recording';
 
 export interface StorageEntry {
   /** Cle stable, utilisee par l'interface. */
@@ -72,6 +73,14 @@ export async function listStorageEntries(configuredDir: string): Promise<Storage
       label: 'Journaux',
       current: path.join(userData, 'logs'),
       folder: 'logs',
+    },
+    {
+      // Les enregistrements vivent dans le dossier de rangement : l'inventaire
+      // les montre, pour que l'utilisateur les retrouve apres une capture.
+      key: 'recordings',
+      label: 'Enregistrements',
+      current: resolveRecordingDir(''),
+      folder: 'recordings',
     },
   ];
 

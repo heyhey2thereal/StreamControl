@@ -10,47 +10,9 @@
  */
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
+import type { IngestProtocol, StreamEndpoint, StreamStatus } from '../shared/types';
 
-/** Protocoles d'ingestion proposes par l'interface. */
-export type IngestProtocol = 'rtmp' | 'srt' | 'rtsp';
-
-export interface StreamEndpoint {
-  id: string;
-  /** Nom lisible, affiche dans l'interface. */
-  name: string;
-  /** Protocole d'ingestion. */
-  protocol: IngestProtocol;
-  /** Chemin de publication, ex. "live" ou "studio/cam1". */
-  path: string;
-  /** Cle d'acces optionnelle : sans elle, toute publication est acceptee. */
-  streamKey: string;
-  /** Appareil source, a titre indicatif. */
-  source: string;
-  enabled: boolean;
-  createdAt: number;
-  /** Duree visee d'un segment HLS, en secondes. */
-  segmentDuration: number;
-  /** Nombre de segments conserves dans la liste de lecture. */
-  playlistSize: number;
-}
-
-/** Etat temps reel d'un flux. */
-export interface StreamStatus {
-  id: string;
-  publishing: boolean;
-  viewers: number;
-  videoWidth?: number;
-  videoHeight?: number;
-  hasAudio: boolean;
-  videoFrames: number;
-  audioFrames: number;
-  bytesReceived: number;
-  startedAt?: number;
-  /** Adresse de l'emetteur connecte. */
-  publisher?: string;
-  /** Debit moyen en kbit/s, calcule sur les dernieres secondes. */
-  bitrateKbps: number;
-}
+export type { IngestProtocol, StreamEndpoint, StreamStatus };
 
 export interface RegistryOptions {
   segmentDuration?: number;
@@ -117,6 +79,7 @@ export class StreamRegistry extends EventEmitter {
       createdAt: Date.now(),
       segmentDuration: input.segmentDuration ?? this.defaultSegmentDuration,
       playlistSize: input.playlistSize ?? this.defaultPlaylistSize,
+      record: input.record === true,
     };
 
     this.endpoints.set(endpoint.id, endpoint);
@@ -212,6 +175,10 @@ export class StreamRegistry extends EventEmitter {
       viewers: number;
       /** Adresse de la source connectee, si connue. */
       publisher?: string;
+      /** Vrai quand MediaMTX enregistre ce chemin. */
+      recording?: boolean;
+      /** Modele de chemin d'enregistrement, si actif. */
+      recordingPath?: string;
     },
   ): void {
     const status = this.statuses.get(id) ?? this.emptyStatus(id);
@@ -222,6 +189,8 @@ export class StreamRegistry extends EventEmitter {
     status.hasAudio = state.hasAudio;
     status.bytesReceived = state.bytesReceived;
     status.publisher = state.publisher;
+    status.recording = state.recording === true;
+    status.recordingPath = state.recordingPath;
     if (state.width) status.videoWidth = state.width;
     if (state.height) status.videoHeight = state.height;
 
@@ -281,6 +250,7 @@ export class StreamRegistry extends EventEmitter {
         path: normalizePath(endpoint.path),
         segmentDuration: endpoint.segmentDuration ?? this.defaultSegmentDuration,
         playlistSize: endpoint.playlistSize ?? this.defaultPlaylistSize,
+        record: endpoint.record === true,
       };
       if (!normalized.path) continue;
       this.endpoints.set(normalized.id, normalized);
@@ -299,6 +269,7 @@ export class StreamRegistry extends EventEmitter {
       audioFrames: 0,
       bytesReceived: 0,
       bitrateKbps: 0,
+      recording: false,
     };
   }
 }

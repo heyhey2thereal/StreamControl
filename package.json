@@ -1,7 +1,7 @@
 {
   "name": "streamcontrol",
   "productName": "StreamControl",
-  "version": "1.0.0",
+  "version": "2.0.2",
   "description": "Regie video pour sources RTMP, avec MediaMTX et OBS Studio.",
   "author": {
     "name": "StreamControl",
@@ -25,8 +25,8 @@
     "vendor:mediamtx": "node scripts/fetch-mediamtx.mjs",
     "dist": "npm run build && electron-builder --win --publish never",
     "dist:publish": "npm run build && electron-builder --win --publish always",
-    "test": "npm run build:electron && node --test --test-force-exit tests/logic.test.mjs tests/obs-client.test.mjs",
-    "test:e2e": "node tests/e2e/app-smoke.mjs && node tests/e2e/pages.mjs && node tests/e2e/update.mjs && node tests/e2e/qol.mjs && node tests/e2e/lock.mjs && node tests/e2e/player.mjs && node tests/e2e/paths.mjs && node tests/e2e/language.mjs && node tests/e2e/ui.mjs && node tests/e2e/storage.mjs && node tests/e2e/streams.mjs && node tests/e2e/mediamtx.mjs && node tests/e2e/obs.mjs",
+    "test": "npm run build:electron && node --test --test-force-exit tests/logic.test.mjs tests/obs-client.test.mjs tests/macro-engine.test.mjs",
+    "test:e2e": "node tests/e2e/app-smoke.mjs && node tests/e2e/onboarding.mjs && node tests/e2e/pages.mjs && node tests/e2e/remote.mjs && node tests/e2e/update.mjs && node tests/e2e/qol.mjs && node tests/e2e/lock.mjs && node tests/e2e/player.mjs && node tests/e2e/paths.mjs && node tests/e2e/language.mjs && node tests/e2e/ui.mjs && node tests/e2e/storage.mjs && node tests/e2e/streams.mjs && node tests/e2e/mediamtx.mjs && node tests/e2e/obs.mjs && node tests/e2e/recording.mjs && node tests/e2e/replay.mjs && node tests/e2e/macro-editor.mjs && node tests/e2e/macro-variables.mjs && node tests/e2e/macro-fixes.mjs && node tests/e2e/macro-condition.mjs && node tests/e2e/macro-notify.mjs",
     "test:all": "npm run build && npm test && npm run test:e2e",
     "icon": "node scripts/make-icon.mjs",
     "clean:electron": "node -e \"require('node:fs').rmSync('dist-electron',{recursive:true,force:true})\"",

@@ -114,6 +114,14 @@ try {
   })()`);
   await sleep(900);
 
+  // Les reglages sont classes par categorie : le texte sur le binaire livre
+  // vit dans la categorie MediaMTX.
+  await cdp.evaluate(`(() => {
+    const chip = [...document.querySelectorAll('.chip')].find(x => x.textContent.includes('MediaMTX'));
+    if (chip) chip.click();
+  })()`);
+  await sleep(400);
+
   const settingsText = await cdp.evaluate('document.body.textContent');
   check(
     'plus de bouton de telechargement MediaMTX',

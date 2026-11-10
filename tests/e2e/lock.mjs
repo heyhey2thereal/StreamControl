@@ -70,14 +70,19 @@ try {
   check('aucun ecran de verrouillage', !(await cdp.evaluate('Boolean(document.querySelector(".lock-screen"))')));
   check('le bouton de verrouillage est present', await cdp.evaluate('Boolean(document.querySelector(".lock-button"))'));
 
-  // --- 2. Definir un mot de passe depuis les Parametres ------------------
+  // --- 2. Definir un mot de passe depuis la pop-up ----------------------
   console.log('\n--- definition du mot de passe ---');
-  await cdp.evaluate(`(() => { const b=[...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('Parametres')); if (b) b.click(); })()`);
-  await sleep(800);
-  check('le champ de mot de passe est present dans les Parametres', await cdp.evaluate('Boolean(document.getElementById("settings-lock-password"))'));
+  // Le bouton de la barre laterale ouvre directement la pop-up : la saisie ne
+  // passe plus par les Parametres.
+  await cdp.evaluate(`document.querySelector('.lock-button')?.click()`);
+  await waitFor('la pop-up de verrouillage apparait', async () =>
+    await cdp.evaluate('Boolean(document.querySelector(".lock-modal"))'), 6000);
+  check('la pop-up de verrouillage s ouvre', await cdp.evaluate('Boolean(document.querySelector(".lock-modal"))'));
+  check('elle demande le mot de passe', await cdp.evaluate('Boolean(document.getElementById("lock-dialog-password"))'));
+  check('elle demande l indice', await cdp.evaluate('Boolean(document.getElementById("lock-dialog-hint"))'));
 
-  await typeInto(cdp, '#settings-lock-password', 'secret42');
-  await typeInto(cdp, '#settings-lock-hint', 'le nombre prefere');
+  await typeInto(cdp, '#lock-dialog-password', 'secret42');
+  await typeInto(cdp, '#lock-dialog-hint', 'le nombre prefere');
   await sleep(300);
   await clickButton(cdp, 'Definir et verrouiller');
 
@@ -87,24 +92,18 @@ try {
   const screen = await cdp.evaluate('document.querySelector(".lock-screen")?.textContent ?? ""');
   check('le titre annonce le verrouillage', /verrouille/i.test(screen), screen.slice(0, 40));
   check('il explique que ce PC est un serveur', /serveur/i.test(screen) && /RTMP/i.test(screen));
-  check('il propose de deverrouiller en cliquant', /cliquez ici/i.test(screen), screen.slice(0, 80));
+  check('il demande le mot de passe tout de suite', /mot de passe/i.test(screen), screen.slice(0, 80));
   check('le logo est en filigrane a droite', await cdp.evaluate('Boolean(document.querySelector(".lock-watermark"))'));
-  check('le champ de mot de passe est masque au depart', !(await cdp.evaluate('Boolean(document.querySelector(".lock-form"))')));
+  // Le mot de passe est demande tout de suite : plus de clic intermediaire.
+  check('le champ de mot de passe est demande d emblee', await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'));
   check('l interface est masquee', !(await cdp.evaluate('Boolean(document.querySelector(".sidebar"))')));
   check('le mot de passe n est pas stocke en clair', (await cdp.evaluate('window.streamcontrol.getSettings()')).ui.lockHash !== 'secret42');
 
-  // Le formulaire apparait apres le clic sur l'invitation.
-  await clickButton(cdp, 'Cliquez ici');
-  await sleep(400);
-  check('le formulaire apparait apres le clic', await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'));
+  check('le formulaire est pret sans clic', await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'));
   check('l indice est affiche', (await cdp.evaluate('document.querySelector(".lock-screen")?.textContent ?? ""')).includes('le nombre prefere'));
 
   // --- 3. Mauvais mot de passe refuse ------------------------------------
   console.log('\n--- refus ---');
-  if (!(await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'))) {
-    await clickButton(cdp, 'Cliquez ici', 'document.querySelector(".lock-screen")');
-    await sleep(300);
-  }
   await typeInto(cdp, '.lock-form input', 'mauvais');
   await cdp.evaluate(`document.querySelector('.lock-form').requestSubmit()`);
   await sleep(900);
@@ -113,10 +112,6 @@ try {
 
   // --- 4. Bon mot de passe deverrouille ----------------------------------
   console.log('\n--- deverrouillage ---');
-  if (!(await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'))) {
-    await clickButton(cdp, 'Cliquez ici', 'document.querySelector(".lock-screen")');
-    await sleep(300);
-  }
   await typeInto(cdp, '.lock-form input', 'secret42');
   await cdp.evaluate(`document.querySelector('.lock-form').requestSubmit()`);
   const opened = await waitFor('le poste se rouvre', async () =>
@@ -126,14 +121,9 @@ try {
 
   // --- 5. Le mot de passe maitre ouvre toujours --------------------------
   console.log('\n--- mot de passe maitre ---');
-  await cdp.evaluate(`(() => { const b=[...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('Parametres')); if (b) b.click(); })()`);
   await sleep(600);
   check('le bouton de verrouillage verrouille le poste', await clickButton(cdp, 'Verrouiller', 'document.querySelector(".sidebar")'));
   await waitFor('l ecran revient', async () => await cdp.evaluate('Boolean(document.querySelector(".lock-screen"))'), 8000);
-  if (!(await cdp.evaluate('Boolean(document.querySelector(".lock-form"))'))) {
-    await clickButton(cdp, 'Cliquez ici', 'document.querySelector(".lock-screen")');
-    await sleep(300);
-  }
   await typeInto(cdp, '.lock-form input', MASTER_PASSWORD);
   await cdp.evaluate(`document.querySelector('.lock-form').requestSubmit()`);
   const master = await waitFor('le mot de passe maitre ouvre', async () =>

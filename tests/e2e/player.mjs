@@ -122,6 +122,36 @@ try {
   check('elle contient une video', player.body.includes('<video'));
   check('elle a un indicateur de chargement', player.body.includes('class="spinner"'));
   check('elle annonce l attente', player.body.includes('En attente'));
+  // L'image ne doit JAMAIS etre etiree : sans object-fit, une camera 4/3 est
+  // deformee, et le format parait « ecrase » (surtout dans la grille OBS).
+  check('elle preserve le format de l image', /object-fit:\s*contain/.test(player.body));
+
+  // L'apercu integre (source OBS) doit le preserver aussi.
+  const embed = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);
+  check('l apercu integre preserve le format', /object-fit:\s*contain/.test(embed.body));
+
+  // --- 2b. Ecran « pas de flux » des cellules de scene OBS ----------------
+  // Par defaut : un message personnalise, avec les variables resolues.
+  console.log('\n--- ecran pas de flux ---');
+  await cdp.evaluate(
+    `window.streamcontrol.saveSettings({ scene: { offlineMode: 'message', offlineText: 'Perdu {flux_nom} !', offlineSpinner: true, offlineTextColor: '#ff0000', offlineBackground: '#101010' } })`,
+  );
+  await sleep(700);
+  const message = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);
+  check('le message offline est servi', message.body.includes('Perdu Cam !'), 'texte personnalise present');
+  check('la variable du flux est resolue', !message.body.includes('{flux_nom}'));
+  check('la couleur de fond est appliquee', message.body.includes('#101010'));
+
+  // Mode « ecran noir » : aucun texte, fond noir.
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ scene: { offlineMode: 'black' } })`);
+  await sleep(700);
+  const black = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);
+  check('le mode noir est servi', black.body.includes('offline-black') || black.body.includes('"mode":"black"'), 'mode noir');
+  check('le message n apparait plus en mode noir', !black.body.includes('Perdu Cam !'));
+
+  // Retour au mode message pour la suite.
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ scene: { offlineMode: 'message', offlineText: 'En attente' } })`);
+  await sleep(500);
 
   // --- 3. Aucune source : pas de session repetee cote MediaMTX -----------
   console.log('\n--- pas de spam sans source ---');

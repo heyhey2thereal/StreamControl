@@ -2,7 +2,8 @@ import { app } from 'electron';
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { AppSettings } from '../shared/types';
+import type { AppSettings, RemotePermissions } from '../shared/types';
+import { sanitizeMacroActions } from '../shared/macro-sanitize';
 import type { Logger } from './logger';
 
 export const SETTINGS_VERSION = 1;
@@ -51,6 +52,49 @@ export function defaultSettings(): AppSettings {
     files: {
       storagePath: '',
     },
+    recording: {
+      path: '',
+      format: 'fmp4',
+      segmentMinutes: 60,
+      retainHours: 24,
+    },
+    remote: {
+      enabled: false,
+      requireApproval: true,
+      passwordHash: '',
+      passwordSalt: '',
+      devices: [],
+      // Tout est refuse par defaut : seul l'utilisateur devant le poste
+      // autorise ce qu'un appareil du reseau peut faire.
+      phone: { scenes: false, recording: false, download: false, macros: false, controls: false },
+      desktop: { scenes: false, recording: false, download: false, macros: false, controls: false },
+    },
+    replay: {
+      enabled: false,
+      // 60 s par defaut : de quoi recuperer un extrait confortable, et au-dela
+      // du minimum de 30 s demande.
+      bufferSeconds: 60,
+      path: '',
+      outputPath: '',
+      minimumSeconds: 30,
+    },
+    watch: {
+      enabled: true,
+      lowBitrateKbps: 800,
+      lowBitrateSeconds: 8,
+      failoverToBackup: false,
+      backupScene: '',
+    },
+    macros: [],
+    showRunner: [],
+    scene: {
+      // Par defaut : un message explicite, plus utile qu'un ecran noir muet.
+      offlineMode: 'message',
+      offlineText: 'Nous avons perdu le retour video de {flux_nom}. Il revient dans quelques secondes.',
+      offlineSpinner: true,
+      offlineTextColor: '#e9ecef',
+      offlineBackground: '#000000',
+    },
   };
 }
 
@@ -86,6 +130,24 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
+/**
+ * Ramene un jeu d'autorisations a des booleens stricts.
+ *
+ * Toute valeur absente ou non booleenne devient `false` : un reglage corrompu
+ * ne doit jamais ouvrir un droit par accident.
+ */
+export function sanitizeRemotePermissions(value: unknown): RemotePermissions {
+  const source = isPlainObject(value) ? value : {};
+  const flag = (key: keyof RemotePermissions): boolean => source[key] === true;
+  return {
+    scenes: flag('scenes'),
+    recording: flag('recording'),
+    download: flag('download'),
+    macros: flag('macros'),
+    controls: flag('controls'),
+  };
+}
+
 /** Applique les contraintes de domaine apres une fusion. */
 export function sanitizeSettings(settings: AppSettings): AppSettings {
   const clean = mergeInto(defaultSettings(), settings);
@@ -112,6 +174,93 @@ export function sanitizeSettings(settings: AppSettings): AppSettings {
 
   clean.streams = Array.isArray(clean.streams) ? clean.streams : [];
   clean.network.overrideIPv4 = String(clean.network.overrideIPv4 ?? '').trim();
+
+  clean.recording.path = String(clean.recording.path ?? '').trim();
+  clean.recording.format = clean.recording.format === 'mpegts' ? 'mpegts' : 'fmp4';
+  clean.recording.segmentMinutes = clampNumber(clean.recording.segmentMinutes, 60, 1, 1440);
+  clean.recording.retainHours = clampNumber(clean.recording.retainHours, 24, 0, 8760);
+
+  clean.remote.enabled = Boolean(clean.remote.enabled);
+  clean.remote.requireApproval = clean.remote.requireApproval !== false;
+  clean.remote.passwordHash = String(clean.remote.passwordHash ?? '').trim();
+  clean.remote.passwordSalt = String(clean.remote.passwordSalt ?? '').trim();
+  clean.remote.devices = Array.isArray(clean.remote.devices)
+    ? clean.remote.devices
+        .filter((device) => device && typeof device.token === 'string' && device.token)
+        .map((device) => ({
+          token: String(device.token),
+          name: String(device.name ?? 'Appareil'),
+          address: device.address ? String(device.address) : undefined,
+          kind: device.kind === 'desktop' ? 'desktop' : device.kind === 'phone' ? 'phone' : undefined,
+          addedAt: Number.isFinite(device.addedAt) ? Number(device.addedAt) : Date.now(),
+          lastSeenAt: Number.isFinite(device.lastSeenAt) ? Number(device.lastSeenAt) : undefined,
+        }))
+    : [];
+  clean.remote.phone = sanitizeRemotePermissions(clean.remote.phone);
+  clean.remote.desktop = sanitizeRemotePermissions(clean.remote.desktop);
+
+  clean.replay.enabled = Boolean(clean.replay.enabled);
+  // 30 s au minimum : c'est la duree exigee pour qu'un replay soit utile.
+  clean.replay.bufferSeconds = clampNumber(clean.replay.bufferSeconds, 60, 30, 3600);
+  clean.replay.path = String(clean.replay.path ?? '').trim();
+  clean.replay.outputPath = String(clean.replay.outputPath ?? '').trim();
+  clean.replay.minimumSeconds = clampNumber(clean.replay.minimumSeconds, 30, 5, 600);
+  // Le minimum ne peut pas depasser la memoire : sinon aucun replay ne
+  // pourrait jamais etre produit.
+  if (clean.replay.minimumSeconds > clean.replay.bufferSeconds) {
+    clean.replay.minimumSeconds = clean.replay.bufferSeconds;
+  }
+
+  clean.watch.enabled = clean.watch.enabled !== false;
+  clean.watch.lowBitrateKbps = clampNumber(clean.watch.lowBitrateKbps, 800, 0, 100000);
+  clean.watch.lowBitrateSeconds = clampNumber(clean.watch.lowBitrateSeconds, 8, 2, 120);
+  clean.watch.failoverToBackup = Boolean(clean.watch.failoverToBackup);
+  clean.watch.backupScene = String(clean.watch.backupScene ?? '').trim();
+
+  clean.macros = Array.isArray(clean.macros)
+    ? clean.macros
+        .filter((macro) => macro && typeof macro.id === 'string' && Array.isArray(macro.actions))
+        .map((macro) => ({
+          id: String(macro.id),
+          name: String(macro.name ?? 'Macro'),
+          actions: sanitizeMacroActions(macro.actions),
+          triggers: Array.isArray(macro.triggers)
+            ? macro.triggers
+                .filter((trigger) => trigger && typeof trigger.kind === 'string')
+                .map((trigger) => ({
+                  kind: trigger.kind,
+                  path: trigger.path ? String(trigger.path) : undefined,
+                  alertKind: trigger.alertKind ? String(trigger.alertKind) : undefined,
+                  at: trigger.at ? String(trigger.at) : undefined,
+                }))
+            : [],
+          disabled: Boolean(macro.disabled),
+          createdAt: Number.isFinite(macro.createdAt) ? Number(macro.createdAt) : Date.now(),
+        }))
+    : [];
+
+  clean.showRunner = Array.isArray(clean.showRunner)
+    ? clean.showRunner
+        .filter((step) => step && typeof step.id === 'string')
+        .map((step) => ({
+          id: String(step.id),
+          name: String(step.name ?? 'Etape'),
+          at: String(step.at ?? ''),
+          notes: String(step.notes ?? ''),
+          done: Boolean(step.done),
+          actions: sanitizeMacroActions(step.actions),
+        }))
+    : [];
+
+  clean.scene.offlineMode = clean.scene.offlineMode === 'black' ? 'black' : 'message';
+  clean.scene.offlineText = String(clean.scene.offlineText ?? '').slice(0, 500);
+  clean.scene.offlineSpinner = clean.scene.offlineSpinner !== false;
+  clean.scene.offlineTextColor = /^#[0-9a-fA-F]{6}$/.test(String(clean.scene.offlineTextColor))
+    ? String(clean.scene.offlineTextColor)
+    : '#e9ecef';
+  clean.scene.offlineBackground = /^#[0-9a-fA-F]{6}$/.test(String(clean.scene.offlineBackground))
+    ? String(clean.scene.offlineBackground)
+    : '#000000';
 
   clean.ui.refreshIntervalMs = clampNumber(clean.ui.refreshIntervalMs, 5000, 1000, 60000);
   clean.ui.maxLogLines = clampNumber(clean.ui.maxLogLines, 500, 100, 5000);

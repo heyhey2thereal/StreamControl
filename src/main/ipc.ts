@@ -12,11 +12,16 @@ import type {
   FirewallResult,
   GatherResult,
   LogEntry,
+  Macro,
   ObsStatus,
   PreflightReport,
+  ReplayResult,
+  ReplayState,
   ServiceActionResult,
   ServiceStatus,
+  ShowStep,
   StorageEntry,
+  StreamDiagnostics,
   StreamEndpoint,
   StreamEndpointView,
   StreamMutationResult,
@@ -24,7 +29,9 @@ import type {
   StreamUrls,
   UpdateResult,
   LockState,
+  WatchAlert,
 } from '../shared/types';
+import type { MacroRunResult, MacroRunEntry } from './automation';
 import { detectAllTools } from './detection';
 import { checkAppUpdate } from './app-updater';
 import type { LockManager } from './lock-manager';
@@ -36,6 +43,13 @@ import { checkReachability } from './firewall';
 import { getNetworkInfo } from './network';
 import { buildPreflight } from './preflight';
 import { listStorageEntries, resolveStorageDir } from './storage';
+import { ensureRecordingDir, probeRecordingDir } from './recording';
+import { replayOutputDir } from './replay';
+import { readSoundFile } from './sound';
+import type { RemoteManager, PairRequest } from './remote';
+import type { Automation } from './automation';
+import type { StreamWatcher } from './watcher';
+import type { DiagnosticsTracker } from './diagnostics';
 import type { SettingsStore } from './settings';
 import type { StreamController } from './stream-controller';
 import type { WebPagesServer } from './web-pages';
@@ -73,11 +87,16 @@ export interface IpcContext {
   streams: StreamController;
   webPages: WebPagesServer;
   lock: LockManager;
+  remote: RemoteManager;
+  automation: Automation;
+  watcher: StreamWatcher;
+  diagnostics: DiagnosticsTracker;
   getWindow: () => BrowserWindow | null;
 }
 
 export function registerIpcHandlers(context: IpcContext): void {
-  const { logger, settings, mediamtx, obs, streams, webPages, lock, getWindow } = context;
+  const { logger, settings, mediamtx, obs, streams, webPages, lock, remote, automation, watcher, diagnostics, getWindow } =
+    context;
 
   /** Enveloppe un gestionnaire pour renvoyer une erreur lisible au rendu. */
   const handle = <T>(channel: string, handler: (...args: never[]) => Promise<T> | T): void => {
@@ -166,8 +185,9 @@ export function registerIpcHandlers(context: IpcContext): void {
   mediamtx.on('status', (status: ServiceStatus) => {
     broadcastService('mediamtx', status);
     if (status.state === 'running') {
-      // MediaMTX demarre : on declare les chemins qui manqueraient, puis on
-      // relit son etat.
+      // MediaMTX demarre : on declare les chemins avec leur enregistrement,
+      // puis on relit son etat.
+      void streams.syncPaths();
       void streams.refreshLiveStatus();
       void quietPreflight().then((report) => {
         getWindow()?.webContents.send(CHANNELS.eventPreflightUpdate, report);
@@ -282,20 +302,183 @@ export function registerIpcHandlers(context: IpcContext): void {
   );
   handle<{ ok: boolean; message: string }>(
     CHANNELS.obsConfigureScene,
-    (sceneName: string, ids: string[]) => {
+    (sceneName: string, selections: Array<{ id: string; enabled?: boolean }>) => {
       // Les identifiants viennent du rendu : on les resout en nom et adresse
-      // /embed, et on ecarte ce qui n'existe pas.
+      // /embed, et on ecarte ce qui n'existe pas. Une adresse desactivee reste
+      // dans la scene, mais sa source est masquee (cellule noire).
       const addresses = streams.list();
-      const sources = (Array.isArray(ids) ? ids : [])
-        .map((id) => addresses.find((entry) => entry.id === id))
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-        .map((entry) => ({ name: entry.name, url: entry.urls.embed }));
+      const sources = (Array.isArray(selections) ? selections : [])
+        .map((selection) => {
+          const entry = addresses.find((candidate) => candidate.id === selection?.id);
+          if (!entry) return null;
+          return { name: entry.name, url: entry.urls.embed, enabled: selection.enabled !== false };
+        })
+        .filter((entry): entry is { name: string; url: string; enabled: boolean } => entry !== null);
       return obs.configureScene(String(sceneName ?? ''), sources);
     },
   );
 
   obs.on('status', (status: ObsStatus) => {
     getWindow()?.webContents.send(CHANNELS.eventObsStatus, status);
+  });
+
+  // --- Automatisation : macros ---------------------------------------------
+  handle<Macro[]>(CHANNELS.macrosList, () => settings.get().macros);
+  handle<Macro>(CHANNELS.macroCreate, (name: string) => automation.createMacro(String(name ?? '')));
+  handle<Macro | null>(CHANNELS.macroUpdate, (id: string, patch: Partial<Macro>) =>
+    automation.updateMacro(String(id), patch),
+  );
+  handle<{ ok: boolean }>(CHANNELS.macroDelete, async (id: string) => {
+    await automation.removeMacro(String(id));
+    return { ok: true };
+  });
+  handle<MacroRunResult>(CHANNELS.macroRun, (id: string) => automation.runMacro(String(id)));
+  handle<{ ok: boolean }>(CHANNELS.macroStop, (id: string) => {
+    automation.stopMacro(String(id));
+    return { ok: true };
+  });
+  handle<{ running: string[] }>(CHANNELS.macrosRunning, () => ({
+    running: settings.get().macros.filter((macro) => automation.isRunning(macro.id)).map((macro) => macro.id),
+  }));
+  handle<Macro | null>(CHANNELS.macroDuplicate, (id: string) => automation.duplicateMacro(String(id)));
+  handle<MacroRunEntry[]>(CHANNELS.macroHistory, () => automation.history());
+  handle<{ ok: boolean }>(CHANNELS.macroHistoryClear, () => {
+    automation.clearHistory();
+    return { ok: true };
+  });
+  handle<string>(CHANNELS.macroExport, () => automation.exportMacros());
+  handle<{ imported: number; message?: string }>(CHANNELS.macroImport, async (raw: string) => {
+    try {
+      const imported = await automation.importMacros(String(raw ?? ''));
+      return { imported };
+    } catch (error) {
+      return { imported: 0, message: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  /** Cree une macro a partir d'un modele pret a l'emploi. */
+  handle<Macro | null>(CHANNELS.macroFromTemplate, (id: string, name: string) =>
+    automation.createFromTemplate(String(id ?? ''), String(name ?? '')),
+  );
+
+  /**
+   * Choix d'un fichier ou d'un dossier pour un champ de bloc.
+   *
+   * Les blocs qui demandent un chemin (son a jouer, dossier a ouvrir) offrent
+   * un bouton « Parcourir » : l'utilisateur choisit dans l'explorateur au lieu
+   * de recopier un chemin, source d'erreurs. Le filtre audio est volontairement
+   * large : selon le poste, le fichier peut etre un .wav, un .mp3 ou un .ogg.
+   */
+  handle<string | null>(CHANNELS.macroPickPath, async (kind: 'file' | 'folder') => {
+    // En test, la boite de dialogue native ne peut pas etre pilotee : un chemin
+    // impose par l'environnement est renvoye directement. C'est le meme procede
+    // que `STREAMCONTROL_UPDATE_API` pour la verification des mises a jour.
+    const forced =
+      (kind === 'folder'
+        ? process.env.STREAMCONTROL_PICK_PATH_FOLDER
+        : process.env.STREAMCONTROL_PICK_PATH_FILE) ?? process.env.STREAMCONTROL_PICK_PATH;
+    if (forced) return forced;
+
+    const window = getWindow();
+    const wantsFolder = kind === 'folder';
+    const options: Electron.OpenDialogOptions = {
+      title: wantsFolder ? 'Choisir un dossier' : 'Choisir un fichier',
+      properties: wantsFolder ? ['openDirectory', 'createDirectory'] : ['openFile'],
+      filters: wantsFolder
+        ? undefined
+        : [
+            { name: 'Sons', extensions: ['wav', 'mp3', 'ogg', 'oga', 'm4a', 'aac', 'flac'] },
+            { name: 'Tous les fichiers', extensions: ['*'] },
+          ],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return path.resolve(result.filePaths[0]);
+  });
+
+  /**
+   * Lit un fichier de son et le renvoie en URL de donnees.
+   *
+   * Le rendu ne peut pas ouvrir un fichier du disque (isolation de contexte,
+   * politique de securite). Le processus principal le lit donc ici et le
+   * transmet en `data:` URL. Un effet sonore reste petit : au-dela de 8 Mo, on
+   * refuse plutot que de charger une URL enorme en memoire.
+   */
+  handle<string | null>(CHANNELS.macroReadSound, async (filePath: string) => {
+    const dataUrl = await readSoundFile(String(filePath ?? ''));
+    if (!dataUrl) {
+      logger.warn('macro', `Son illisible ou trop volumineux : ${String(filePath ?? '')}`);
+    }
+    return dataUrl;
+  });
+
+  // --- Conducteur de spectacle ---------------------------------------------
+  handle<ShowStep[]>(CHANNELS.showList, () => automation.listShow());
+  handle<ShowStep>(CHANNELS.showAdd, (name: string, at: string, notes: string) =>
+    automation.addShowStep(String(name ?? ''), String(at ?? ''), String(notes ?? '')),
+  );
+  handle<{ ok: boolean }>(CHANNELS.showUpdate, async (id: string, patch: Partial<ShowStep>) => {
+    await automation.updateShowStep(String(id), patch);
+    return { ok: true };
+  });
+  handle<{ ok: boolean }>(CHANNELS.showDelete, async (id: string) => {
+    await automation.removeShowStep(String(id));
+    return { ok: true };
+  });
+  handle<{ ok: boolean }>(CHANNELS.showReset, async () => {
+    await automation.resetShow();
+    return { ok: true };
+  });
+  handle<{ ok: boolean; step?: ShowStep; message?: string }>(CHANNELS.showNext, () => automation.nextShowStep());
+
+  // --- Surveillance et analyse ---------------------------------------------
+  handle<WatchAlert[]>(CHANNELS.watchAlerts, () => watcher.list());
+  handle<{ ok: boolean }>(CHANNELS.watchAcknowledge, () => {
+    watcher.acknowledgeAll();
+    return { ok: true };
+  });
+  handle<{ ok: boolean }>(CHANNELS.watchReset, () => {
+    watcher.reset();
+    return { ok: true };
+  });
+  handle<StreamDiagnostics[]>(CHANNELS.diagnosticsList, () =>
+    streams.list().map((endpoint) =>
+      diagnostics.build(endpoint.status, endpoint.name, endpoint.path, watcher.outagesFor(endpoint.path), 0),
+    ),
+  );
+
+  // --- Replay instantane ---------------------------------------------------
+  handle<ReplayResult>(CHANNELS.replaySave, (id: string, options?: { fromSeconds?: number; toSeconds?: number }) =>
+    streams.saveReplay(String(id), options ?? {}),
+  );
+  handle<ReplayState>(CHANNELS.replayState, (id: string) => streams.replayState(String(id)));
+  handle<{ seconds: number }>(CHANNELS.replayAvailable, async (id: string) => ({
+    seconds: await streams.replayAvailable(String(id)),
+  }));
+  handle<GatherResult>(CHANNELS.replayOpenFolder, async () => {
+    // Le dossier des replays est configurable : on ouvre celui qui est
+    // reellement utilise, en le creant au besoin.
+    const directory = replayOutputDir(settings.get().replay.outputPath);
+    await mkdir(directory, { recursive: true });
+    const failure = await withTimeout(shell.openPath(directory), 4000);
+    if (typeof failure === 'string' && failure) {
+      return { ok: false, directory, moved: [], failed: [], message: failure };
+    }
+    return { ok: true, directory, moved: [], failed: [], message: directory };
+  });
+  handle<string | null>(CHANNELS.replayPickDir, async () => {
+    const window = getWindow();
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choisir le dossier des replays',
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return path.resolve(result.filePaths[0]);
   });
 
   // --- Adresses de diffusion ----------------------------------------------
@@ -311,6 +494,91 @@ export function registerIpcHandlers(context: IpcContext): void {
   handle<boolean>(CHANNELS.streamOpenWindow, (id: string) => streams.openViewerWindow(id));
   handle<boolean>(CHANNELS.streamCloseWindow, (id: string) => streams.closeViewerWindow(id));
 
+  // --- Enregistrement des flux --------------------------------------------
+  // L'enregistrement est pilote par MediaMTX : activer un flux revient a
+  // modifier son chemin, sans toucher aux autres. Chaque flux a son propre
+  // fichier, donc plusieurs enregistrements tournent en parallele.
+  handle<StreamMutationResult>(CHANNELS.streamSetRecording, async (id: string, record: boolean) => {
+    const result = streams.update(id, { record: record === true });
+    if (result.ok) {
+      const endpoint = result.endpoint;
+      logger.info(
+        'recording',
+        `Enregistrement ${record ? 'active' : 'arrete'} pour "${endpoint?.name ?? id}".`,
+      );
+    }
+    return result;
+  });
+
+  handle<{ ok: boolean; directory: string; message: string }>(CHANNELS.recordingProbe, () =>
+    probeRecordingDir(settings.get().recording.path),
+  );
+
+  handle<GatherResult>(CHANNELS.recordingOpen, async () => {
+    const { directory } = await ensureRecordingDir(settings.get().recording.path, logger);
+    const failure = await withTimeout(shell.openPath(directory), 4000);
+    if (typeof failure === 'string' && failure) {
+      return { ok: false, directory, moved: [], failed: [], message: failure };
+    }
+    return { ok: true, directory, moved: [], failed: [], message: directory };
+  });
+
+  handle<string | null>(CHANNELS.recordingPickDir, async () => {
+    const window = getWindow();
+    const options: Electron.OpenDialogOptions = {
+      title: "Choisir le dossier d'enregistrement",
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return path.resolve(result.filePaths[0]);
+  });
+
+  // --- StreamControl Remote -----------------------------------------------
+  // L'appairage passe par une pop-up sur le poste : c'est l'utilisateur
+  // present devant le PC qui autorise un telephone, jamais le reseau seul.
+  handle<PairRequest[]>(CHANNELS.remotePending, () => remote.listPending());
+
+  handle<{ ok: boolean }>(CHANNELS.remoteApprove, async (id: string, accept: boolean) => {
+    if (accept) {
+      const device = await remote.accept(String(id));
+      if (!device) return { ok: false };
+      getWindow()?.webContents.send(CHANNELS.eventSettingsChanged, settings.get());
+      return { ok: true };
+    }
+    return { ok: remote.refuse(String(id)) };
+  });
+
+  handle<{ ok: boolean }>(CHANNELS.remoteForget, async (token: string) => {
+    await remote.forget(String(token));
+    getWindow()?.webContents.send(CHANNELS.eventSettingsChanged, settings.get());
+    return { ok: true };
+  });
+
+  handle<{ ok: boolean; hasPassword: boolean; message?: string }>(
+    CHANNELS.remoteSetPassword,
+    async (password: string) => {
+      try {
+        await remote.setPassword(String(password ?? ''));
+        getWindow()?.webContents.send(CHANNELS.eventSettingsChanged, settings.get());
+        return { ok: true, hasPassword: remote.hasPassword };
+      } catch (error) {
+        return {
+          ok: false,
+          hasPassword: remote.hasPassword,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  // Une demande d'appairage remonte tout de suite a l'interface du poste.
+  remote.on('pair-request', (request: PairRequest) => {
+    getWindow()?.webContents.send(CHANNELS.eventRemotePairRequest, request);
+  });
+
   streams.on('streams-changed', (list: StreamEndpointView[]) => {
     getWindow()?.webContents.send(CHANNELS.eventStreamsChanged, list);
   });
@@ -321,7 +589,21 @@ export function registerIpcHandlers(context: IpcContext): void {
     getWindow()?.webContents.send(CHANNELS.eventDeviceDisconnected, device);
   });
   streams.on('streams-refresh', () => {
-    getWindow()?.webContents.send(CHANNELS.eventStreamsChanged, streams.list());
+    // La surveillance et l'analyse observent le meme rafraichissement : une
+    // seule lecture de l'etat suffit pour les trois.
+    const list = streams.list();
+    watcher.inspect(
+      list.map((endpoint) => ({
+        path: endpoint.path,
+        name: endpoint.name,
+        publishing: endpoint.status.publishing,
+        bitrateKbps: endpoint.status.bitrateKbps,
+      })),
+    );
+    for (const endpoint of list) {
+      diagnostics.observe(endpoint.id, endpoint.status.bytesReceived);
+    }
+    getWindow()?.webContents.send(CHANNELS.eventStreamsChanged, list);
   });
 
   // --- Fichiers de l'application ------------------------------------------

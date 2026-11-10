@@ -18,7 +18,7 @@ export function UpdateDialog({ sc }: { sc: StreamControl }) {
 
   // Echap ferme la fenetre : c'est le geste attendu pour une boite de dialogue.
   useEffect(() => {
-    if (!update) return;
+    if (!update || !sc.updateDialogOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') sc.dismissUpdate();
     };
@@ -26,7 +26,9 @@ export function UpdateDialog({ sc }: { sc: StreamControl }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [sc, update]);
 
-  if (!update) return null;
+  // La fenetre ne s'affiche que si elle est ouverte : « Plus tard » la ferme
+  // sans retirer le badge de la barre laterale.
+  if (!update || !sc.updateDialogOpen) return null;
 
   const openDownload = async () => {
     const target = update.downloadUrl || update.releaseUrl;

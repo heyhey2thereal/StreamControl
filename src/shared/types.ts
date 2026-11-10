@@ -115,9 +115,592 @@ export interface AppSettings {
     /** Dossier de rangement. Vide = dossier par defaut. */
     storagePath: string;
   };
+  /** Enregistrement des flux, pilote par MediaMTX (independant d'OBS). */
+  recording: {
+    /** Dossier des enregistrements. Vide = dossier par defaut. */
+    path: string;
+    /** Format des segments : fmp4 (recommande) ou mpegts. */
+    format: 'fmp4' | 'mpegts';
+    /** Duree d'un segment, en minutes. */
+    segmentMinutes: number;
+    /** Duree de conservation, en heures (0 = conservation illimitee). */
+    retainHours: number;
+  };
+  /** StreamControl Remote : panneau de controle sur le reseau local. */
+  remote: {
+    /** Vrai pour servir la page /remote et accepter les connexions. */
+    enabled: boolean;
+    /** Vrai pour exiger une validation sur le poste a chaque nouvel appareil. */
+    requireApproval: boolean;
+    /**
+     * Empreinte du mot de passe d'acces au panneau distant. Vide = aucun mot
+     * de passe : l'appairage sur le poste suffit alors. Le mot de passe
+     * lui-meme n'est jamais conserve.
+     */
+    passwordHash: string;
+    /** Sel du mot de passe du panneau distant. */
+    passwordSalt: string;
+    /** Appareils deja autorises. */
+    devices: RemoteDevice[];
+    /** Autorisations accordees au panneau ouvert sur un telephone. */
+    phone: RemotePermissions;
+    /** Autorisations accordees au panneau ouvert sur un ordinateur. */
+    desktop: RemotePermissions;
+  };
+  /** Replay instantane : tampon des dernieres secondes. */
+  replay: {
+    /** Vrai pour conserver en continu les dernieres secondes de chaque flux. */
+    enabled: boolean;
+    /**
+     * Duree du tampon, en secondes : combien de temps l'application memorise
+     * chaque flux. Un replay plus long que cette valeur est refuse.
+     */
+    bufferSeconds: number;
+    /** Dossier du tampon. Vide = sous-dossier du rangement. */
+    path: string;
+    /** Dossier ou sont ecrits les replays sauvegardes. Vide = defaut. */
+    outputPath: string;
+    /** Duree minimale d'un replay, en secondes. */
+    minimumSeconds: number;
+  };
+  /** Surveillance automatique des flux : regles et alertes. */
+  watch: {
+    enabled: boolean;
+    /** Seuil de debit sous lequel un flux est signale, en kbit/s (0 = ignore). */
+    lowBitrateKbps: number;
+    /** Duree sous le seuil avant alerte, en secondes. */
+    lowBitrateSeconds: number;
+    /** Vrai pour proposer une bascule vers une source de secours dans OBS. */
+    failoverToBackup: boolean;
+    /** Adresse de secours (nom de scene OBS ou chemin de flux). */
+    backupScene: string;
+  };
+  /** Macros et sequences : suites d'actions reutilisables. */
+  macros: Macro[];
+  /** Conducteur de spectacle : etapes horodatees d'un evenement. */
+  showRunner: ShowStep[];
+  /** Apparence des cellules d'une scene OBS quand le flux ne publie pas. */
+  scene: SceneDisplaySettings;
+}
+
+/**
+ * Ce qu'affiche une cellule de scene OBS quand son flux ne publie pas.
+ *
+ * Deux modes : un ecran **noir** (aucune image, aucune distraction), ou un
+ * **message** avec le texte choisi. Le texte accepte les variables de macro,
+ * comme « Nous avons perdu le retour video de {flux_nom} ».
+ */
+export interface SceneDisplaySettings {
+  /** 'black' : ecran noir. 'message' : texte (et anneau de chargement). */
+  offlineMode: 'black' | 'message';
+  /** Texte affiche en mode « message ». Variables acceptees. */
+  offlineText: string;
+  /** Vrai pour afficher l'anneau de chargement en mode « message ». */
+  offlineSpinner: boolean;
+  /** Couleur du texte (hexadecimal, ex. #e9ecef). */
+  offlineTextColor: string;
+  /** Couleur du fond (hexadecimal, ex. #000000). */
+  offlineBackground: string;
+}
+
+/** Nature de l'appareil connecte au panneau distant. */
+export type RemoteDeviceKind = 'phone' | 'desktop';
+
+/**
+ * Autorisations accordees a une categorie d'appareil.
+ *
+ * Elles sont definies separement pour les telephones et pour les ordinateurs :
+ * un poste du reseau peut ainsi avoir le droit de changer les scenes sans
+ * celui de verrouiller le poste de travail. Tout est refuse par defaut, sauf
+ * la lecture des flux, qui est l'objet meme du panneau.
+ */
+export interface RemotePermissions {
+  /** Changer la scene OBS, et lancer la transition en mode studio. */
+  scenes: boolean;
+  /** Activer ou arreter l'enregistrement cote serveur d'un flux. */
+  recording: boolean;
+  /** Enregistrer la lecture dans le navigateur (Telechargements). */
+  download: boolean;
+  /** Lancer les macros. */
+  macros: boolean;
+  /** Verrouiller le poste, redemarrer MediaMTX, se deconnecter. */
+  controls: boolean;
+}
+
+/** Un appareil autorise a piloter StreamControl a distance. */
+export interface RemoteDevice {
+  /** Jeton opaque, genere a l'appairage. */
+  token: string;
+  /** Nom lisible, ex. « iPhone de Alex ». */
+  name: string;
+  /** Adresse reseau au moment de l'appairage. */
+  address?: string;
+  /** Nature de l'appareil, deduite de son navigateur. */
+  kind?: RemoteDeviceKind;
+  addedAt: number;
+  lastSeenAt?: number;
 }
 
 export type DetectionKind = 'mediamtx' | 'obs' | 'ffmpeg';
+
+/**
+ * Nature d'une action de macro.
+ *
+ * Les actions sont regroupees par domaine, pour que l'editeur visuel puisse
+ * les presenter en blocs coherents.
+ */
+export type MacroActionKind =
+  // --- OBS : scenes et transitions ---
+  | 'scene'
+  | 'preview-scene'
+  | 'transition'
+  | 'set-transition'
+  | 'transition-duration'
+  | 'studio-mode'
+  | 'create-scene'
+  | 'delete-scene'
+  | 'rename-scene'
+  // --- OBS : diffusion et enregistrement ---
+  | 'start-stream'
+  | 'stop-stream'
+  | 'toggle-stream'
+  | 'start-record'
+  | 'stop-record'
+  | 'toggle-record'
+  | 'pause-record'
+  | 'resume-record'
+  | 'split-record'
+  // --- OBS : sources ---
+  | 'show-source'
+  | 'hide-source'
+  | 'toggle-source'
+  // --- OBS : audio ---
+  | 'mute-source'
+  | 'unmute-source'
+  | 'set-volume'
+  // --- Flux (MediaMTX) ---
+  | 'record-stream'
+  | 'replay'
+  | 'replay-all'
+  | 'create-stream'
+  | 'delete-stream'
+  | 'enable-stream'
+  | 'disable-stream'
+  // --- Poste ---
+  | 'lock'
+  | 'restart-mediamtx'
+  | 'start-mediamtx'
+  | 'stop-mediamtx'
+  | 'open-folder'
+  | 'open-url'
+  // --- Controle du deroulement ---
+  | 'wait'
+  | 'wait-until'
+  | 'condition'
+  | 'repeat'
+  | 'log'
+  | 'notify'
+  | 'popup'
+  | 'sound'
+  | 'stop-macro'
+  | 'http-request';
+
+/** Categorie d'une action, pour le regroupement dans l'editeur. */
+export type MacroActionGroup = 'obs' | 'flux' | 'poste' | 'controle' | 'alerte';
+
+/** Une action d'une macro, avec ses parametres. */
+export interface MacroAction {
+  kind: MacroActionKind;
+  /** Scene OBS visee (pour `scene`, `preview-scene`, `set-transition`...). */
+  scene?: string;
+  /** Duree d'attente en secondes (pour `wait`). */
+  seconds?: number;
+  /**
+   * Temps d'attente, en secondes, AVANT de passer a l'action suivante.
+   *
+   * C'est le reglage qui permet d'espacer les evenements d'une macro : chaque
+   * action peut laisser passer un delai. 0 ou absent = enchainement immediat.
+   */
+  delaySeconds?: number;
+  /** Flux vise (pour `record-stream`, `replay`, `delete-stream`). */
+  streamId?: string;
+  /** Vrai pour activer, faux pour arreter (pour `record-stream`, `studio-mode`). */
+  enabled?: boolean;
+  /** Nom libre : nom de scene a creer, nom d'adresse, texte de notification. */
+  text?: string;
+  /** Chemin d'adresse, pour `create-stream`. */
+  path?: string;
+  /**
+   * Mot de passe du poste, pour `lock`.
+   *
+   * Le verrouillage d'une macro peut exiger le mot de passe : c'est ce qui
+   * evite qu'une macro lancee par erreur enferme l'operateur dehors.
+   */
+  password?: string;
+  /** Nombre de repetitions, pour `repeat`. */
+  repeat?: number;
+  /** Sous-actions, pour `repeat` et `condition`. */
+  actions?: MacroAction[];
+  /** Condition a tester, pour `condition` et `wait-until`. */
+  condition?: MacroCondition;
+  /**
+   * Nom de la source OBS visee (pour les actions de source et d'audio).
+   * C'est le nom affiche dans OBS, ex. « Camera 1 ».
+   */
+  source?: string;
+  /** Volume de 0 a 100, pour `set-volume`. */
+  volume?: number;
+  /** Niveau du message, pour `log`. */
+  level?: MacroLogLevel;
+  /** Adresse a ouvrir, pour `open-url` ou `http-request`. */
+  url?: string;
+  /** Duree maximale d'attente, en secondes, pour `wait-until`. */
+  timeoutSeconds?: number;
+  /**
+   * Fichier de son a jouer, pour `sound`. Un chemin vide joue le son systeme
+   * par defaut.
+   */
+  soundPath?: string;
+  /** Volume du son, de 0 a 100, pour `sound`. Absent = 100. */
+  soundVolume?: number;
+  /**
+   * Vrai pour afficher la notification de macro dans l'interface.
+   *
+   * Coche, le message apparait comme une bulle en bas a gauche de la fenetre ;
+   * decoche, il ne va que dans le journal. Absent = vrai.
+   */
+  notifyToast?: boolean;
+  /** Texte du bouton de la pop-up, pour `popup`. */
+  confirmLabel?: string;
+  /** Vrai pour exiger une confirmation avant de continuer (`popup`). */
+  requireConfirmation?: boolean;
+
+  // --- Bloc « condition » (comparaison) ----------------------------------
+  /**
+   * Operande de gauche : un texte libre, ou une variable (`{flux_debit}`).
+   *
+   * Renseigne, il remplace l'ancien test predefini (`condition`) : on compare
+   * alors deux valeurs au lieu de verifier un etat connu.
+   */
+  conditionLeft?: string;
+  /** Comparaison appliquee entre les deux operandes. Absent = `equal`. */
+  conditionOperator?: MacroCompareOperator;
+  /** Operande de droite : un texte libre, ou une variable. */
+  conditionRight?: string;
+  /**
+   * Ce qui se passe quand le test est faux.
+   *
+   * `skip` : on saute le bloc et la macro continue (comportement par defaut).
+   * `stop` : la macro s'arrete la.
+   */
+  conditionOnFalse?: 'skip' | 'stop';
+  /**
+   * Vrai pour continuer la macro apres le bloc, quel que soit le resultat.
+   *
+   * Faux : le bloc est un terminus — une fois ses sous-actions terminees, la
+   * macro s'arrete, meme si le test etait vrai. C'est ce qu'on veut pour un
+   * « si ... alors ... fin » place au milieu d'une sequence.
+   */
+  conditionContinue?: boolean;
+}
+
+/**
+ * Comparaisons proposees par le bloc « condition ».
+ *
+ * Les comparaisons de nombre (`less-than`, `more-than`) convertissent les deux
+ * operandes : « 900 » est plus petit que « 1200 », ce qu'une comparaison de
+ * texte ne dirait pas.
+ */
+export type MacroCompareOperator =
+  | 'equal'
+  | 'not-equal'
+  | 'contains'
+  | 'not-contains'
+  | 'starts-with'
+  | 'ends-with'
+  | 'less-than'
+  | 'more-than'
+  | 'is-empty'
+  | 'is-not-empty';
+
+/** Etats predefinis testables par le bloc « condition ». */
+export type MacroCondition =
+  | 'obs-connected'
+  | 'stream-live'
+  | 'mediamtx-running'
+  | 'recording'
+  | 'streaming'
+  | 'macro-running';
+
+/** Niveau d'un message de journal. */
+export type MacroLogLevel = 'info' | 'warn' | 'error';
+
+// --- Variables de macro ----------------------------------------------------
+
+/** Un flux, vu par le moteur de variables. */
+export interface MacroVariableStream {
+  id: string;
+  name: string;
+  path: string;
+  live: boolean;
+  width?: number;
+  height?: number;
+  hasAudio?: boolean;
+  bitrateKbps?: number;
+  viewers?: number;
+  startedAt?: number;
+  publisher?: string;
+  recording?: boolean;
+  recordingPath?: string;
+  urls?: EndpointUrls;
+}
+
+/** OBS, vu par le moteur de variables. */
+export interface MacroVariableObs {
+  connected: boolean;
+  version?: string;
+  host?: string;
+  port?: number;
+  currentScene?: string;
+  previewScene?: string;
+  studioMode?: boolean;
+  currentTransition?: string;
+  transitionDurationMs?: number;
+  streaming?: boolean;
+  recording?: boolean;
+  scenes?: string[];
+  sources?: string[];
+}
+
+/** MediaMTX, vu par le moteur de variables. */
+export interface MacroVariableMediamtx {
+  state?: string;
+  running?: boolean;
+  rtmpPort?: number;
+  hlsPort?: number;
+  webrtcPort?: number;
+  rtspPort?: number;
+  apiPort?: number;
+  webPagesPort?: number;
+  streamPath?: string;
+}
+
+/** Le poste, vu par le moteur de variables. */
+export interface MacroVariablePoste {
+  hostname?: string;
+  ip?: string;
+  ipLocal?: string;
+  system?: string;
+  platform?: string;
+  user?: string;
+  locked?: boolean;
+  userDataDir?: string;
+  storageDir?: string;
+  recordingsDir?: string;
+  replayDir?: string;
+}
+
+/** L'application, vue par le moteur de variables. */
+export interface MacroVariableApp {
+  name?: string;
+  version?: string;
+  language?: string;
+  theme?: string;
+}
+
+/** La macro en cours d'execution. */
+export interface MacroVariableMacro {
+  name?: string;
+  id?: string;
+  actionCount?: number;
+  index?: number;
+  origin?: string;
+}
+
+/** Le declencheur qui a lance la macro. */
+export interface MacroVariableTrigger {
+  kind?: string;
+  label?: string;
+  path?: string;
+  alertKind?: string;
+  alertLabel?: string;
+}
+
+/**
+ * Contexte complet d'une execution de macro.
+ *
+ * Tous les champs sont facultatifs : une variable sans donnee devient une
+ * chaine vide plutot que d'empecher la macro de tourner.
+ */
+export interface MacroVariableContext {
+  flux?: MacroVariableStream;
+  streams?: MacroVariableStream[];
+  obs?: MacroVariableObs;
+  mediamtx?: MacroVariableMediamtx;
+  poste?: MacroVariablePoste;
+  app?: MacroVariableApp;
+  macro?: MacroVariableMacro;
+  trigger?: MacroVariableTrigger;
+  /** Instant de l'execution ; par defaut, maintenant. */
+  now?: Date;
+}
+
+/** Un modele de macro pret a l'emploi, propose dans l'onglet Automatisation. */
+export interface MacroTemplate {
+  id: string;
+  /** Cle i18n du nom du modele. */
+  label: string;
+  /** Cle i18n de la description : ce que le modele fait, en une phrase. */
+  description: string;
+  /** Cle i18n du niveau : « debutant », « intermediaire », « avance ». */
+  level: string;
+  /** Icone de la palette d'icones. */
+  icon: string;
+  /** Construit les actions du modele, avec des identifiants de flux reels. */
+  build: (context: MacroTemplateContext) => MacroAction[];
+  /** Declencheurs proposes avec le modele. */
+  triggers?: MacroTrigger[];
+}
+
+/** Ce dont un modele a besoin pour se construire. */
+export interface MacroTemplateContext {
+  /** Adresses de diffusion disponibles. */
+  streams: Array<{ id: string; name: string; path: string }>;
+  /** Scenes OBS disponibles. */
+  scenes: string[];
+}
+
+
+/** Declencheur d'une macro : ce qui la lance sans intervention. */
+export type MacroTriggerKind =
+  | 'manual'
+  | 'stream-connect'
+  | 'stream-disconnect'
+  | 'alert'
+  | 'schedule'
+  | 'startup';
+
+/** Un declencheur, avec ses parametres. */
+export interface MacroTrigger {
+  kind: MacroTriggerKind;
+  /** Chemin du flux concerne (pour `stream-connect` / `stream-disconnect`). */
+  path?: string;
+  /** Nature d'alerte (pour `alert`), ex. « offline » ou « low-bitrate ». */
+  alertKind?: string;
+  /** Heure quotidienne « HH:MM » (pour `schedule`). */
+  at?: string;
+}
+
+/** Une entree du journal d'execution des macros. */
+export interface MacroRunEntry {
+  id: string;
+  macroName: string;
+  macroId: string;
+  at: number;
+  durationMs: number;
+  executed: number;
+  total: number;
+  ok: boolean;
+  message?: string;
+  origin: 'manual' | 'trigger' | 'remote' | 'step';
+}
+
+/** Une macro : une suite d'actions rejouable en un clic. */
+export interface Macro {
+  id: string;
+  name: string;
+  actions: MacroAction[];
+  /**
+   * Declencheurs de la macro. Vide ou `manual` = uniquement a la main.
+   *
+   * Une macro peut cumuler plusieurs declencheurs : a la connexion d'un flux,
+   * sur une alerte, ou a une heure fixe.
+   */
+  triggers: MacroTrigger[];
+  /** Vrai quand la macro est desactivee (elle ne se declenche plus). */
+  disabled?: boolean;
+  createdAt: number;
+}
+
+/** Une etape du conducteur de spectacle. */
+export interface ShowStep {
+  id: string;
+  /** Nom court, ex. « Lancement du generique ». */
+  name: string;
+  /** Heure prevue, au format « HH:MM » ; vide = pas d'horaire. */
+  at: string;
+  /** Notes libres pour l'operateur. */
+  notes: string;
+  /** Vrai quand l'etape est passee. */
+  done: boolean;
+  /** Actions executees au passage a cette etape. */
+  actions: MacroAction[];
+}
+
+/** Etat du replay pour un flux. */
+export interface ReplayState {
+  /** Vrai si le tampon tourne pour ce flux. */
+  active: boolean;
+  /** Duree reellement disponible dans le tampon, en secondes. */
+  availableSeconds: number;
+  /** Vrai si le flux publie depuis assez longtemps pour un replay complet. */
+  ready: boolean;
+}
+
+/** Resultat d'une sauvegarde de replay. */
+export interface ReplayResult {
+  ok: boolean;
+  /** Chemin du fichier MP4 produit, si la sauvegarde a reussi. */
+  file?: string;
+  /** Message lisible (succes ou raison de l'echec). */
+  message: string;
+  /** Duree effectivement sauvegardee, en secondes. */
+  seconds?: number;
+}
+
+/** Alerte de surveillance d'un flux. */
+export interface WatchAlert {
+  id: string;
+  /** Chemin du flux concerne. */
+  path: string;
+  /** Nom lisible du flux. */
+  name: string;
+  kind: 'offline' | 'online' | 'low-bitrate' | 'recovered';
+  message: string;
+  at: number;
+  /** Vrai quand l'operateur a acquitte l'alerte. */
+  acknowledged: boolean;
+}
+
+/** Mesures techniques d'un flux, pour l'analyse. */
+export interface StreamDiagnostics {
+  id: string;
+  name: string;
+  path: string;
+  publishing: boolean;
+  /** Resolution annoncee par MediaMTX. */
+  width?: number;
+  height?: number;
+  /** Images par seconde mesurees sur la fenetre d'observation. */
+  measuredFps: number;
+  /** Debit moyen, en kbit/s. */
+  bitrateKbps: number;
+  /** Debit minimal observe, en kbit/s. */
+  minBitrateKbps: number;
+  /** Debit maximal observe, en kbit/s. */
+  maxBitrateKbps: number;
+  /** Ecart-type du debit : eleve = flux instable. */
+  bitrateJitter: number;
+  /** Vrai si le flux semble stable (peu de variation). */
+  stable: boolean;
+  /** Nombre d'interruptions observees depuis le demarrage. */
+  outages: number;
+  /** Duree de la session en cours, en secondes. */
+  sessionSeconds: number;
+  /** Taille du tampon de replay disponible, en secondes. */
+  replaySeconds: number;
+}
+
 
 export interface DetectedTool {
   kind: DetectionKind;
@@ -201,6 +784,8 @@ export interface ObsStatus {
   currentTransition?: string;
   /** Duree de la transition, en millisecondes. */
   transitionDurationMs?: number;
+  /** Noms des sources connues, pour les macros et l'editeur. */
+  sources?: string[];
 }
 
 export interface StreamUrls {
@@ -248,6 +833,8 @@ export interface StreamEndpoint {
   createdAt: number;
   segmentDuration: number;
   playlistSize: number;
+  /** Vrai pour enregistrer ce flux (independant des autres). */
+  record: boolean;
 }
 
 /** Etat temps reel d'un flux. */
@@ -264,6 +851,10 @@ export interface StreamStatus {
   startedAt?: number;
   publisher?: string;
   bitrateKbps: number;
+  /** Vrai quand ce flux est en cours d'enregistrement. */
+  recording: boolean;
+  /** Dossier ou les fichiers de ce flux sont ecrits, si l'enregistrement est actif. */
+  recordingPath?: string;
 }
 
 /** Toutes les URL utiles d'une adresse, pour l'affichage et la copie. */
@@ -381,6 +972,16 @@ export interface StreamControlEvents {
   'stream:status': StreamStatus;
   'device:connected': DeviceEvent;
   'device:disconnected': DeviceEvent;
+  'remote:pair-request': { id: string; name: string; address: string; kind: RemoteDeviceKind; at: number };
+  'macro:notice': string;
+  /**
+   * Son a jouer, demande par une macro.
+   *
+   * Le champ porte une URL de donnees (ou une chaine vide pour le bip systeme)
+   * et le libelle de l'action, pour que l'interface signale ce qui se joue.
+   * `volume` va de 0 a 100 ; absent, le son est joue a plein volume.
+   */
+  'macro:play-sound': { dataUrl: string; label: string; volume?: number };
 }
 
 export type Unsubscribe = () => void;
@@ -448,9 +1049,13 @@ export interface StreamControlApi {
   obsCreateScene(name: string): Promise<{ ok: boolean; message: string }>;
   /**
    * Configure une scene : elle affiche de 1 a 4 flux, repartis en grille.
-   * @param ids identifiants des adresses de diffusion a afficher.
+   * @param selections identifiants des adresses a afficher, avec leur etat
+   *   active (une adresse desactivee laisse un ecran noir dans sa cellule).
    */
-  obsConfigureScene(sceneName: string, ids: string[]): Promise<{ ok: boolean; message: string }>;
+  obsConfigureScene(
+    sceneName: string,
+    selections: Array<{ id: string; enabled?: boolean }>,
+  ): Promise<{ ok: boolean; message: string }>;
   /** Noms des adresses deja affichees par une scene. */
   obsSceneStreams(sceneName: string): Promise<string[]>;
 
@@ -480,6 +1085,103 @@ export interface StreamControlApi {
   /** Ouvre la fenetre de lecture integree pour une adresse. */
   openStreamWindow(id: string): Promise<boolean>;
   closeStreamWindow(id: string): Promise<boolean>;
+  /** Active ou desactive l'enregistrement de ce flux, sans toucher aux autres. */
+  streamSetRecording(id: string, record: boolean): Promise<StreamMutationResult>;
+
+  // --- Enregistrement des flux ---------------------------------------------
+  /** Verifie que le dossier d'enregistrement est accessible en ecriture. */
+  recordingProbe(): Promise<{ ok: boolean; directory: string; message: string }>;
+  /** Ouvre le dossier des enregistrements (cree au besoin). */
+  recordingOpen(): Promise<GatherResult>;
+  /** Choisit un dossier d'enregistrement. */
+  recordingPickDir(): Promise<string | null>;
+
+  // --- StreamControl Remote -------------------------------------------------
+  /** Demandes d'appairage en attente, pour la pop-up du poste. */
+  remotePending(): Promise<Array<{ id: string; name: string; address: string; kind: RemoteDeviceKind; at: number }>>;
+  /** Accepte ou refuse une demande d'appairage. */
+  remoteApprove(id: string, accept: boolean): Promise<{ ok: boolean }>;
+  /** Retire un appareil autorise. */
+  remoteForget(token: string): Promise<{ ok: boolean }>;
+  /** Definit (ou retire, si vide) le mot de passe du panneau distant. */
+  remoteSetPassword(
+    password: string,
+  ): Promise<{ ok: boolean; hasPassword: boolean; message?: string }>;
+
+  // --- Automatisation : macros ---------------------------------------------
+  macrosList(): Promise<Macro[]>;
+  macroCreate(name: string): Promise<Macro>;
+  macroUpdate(id: string, patch: Partial<Macro>): Promise<Macro | null>;
+  macroDelete(id: string): Promise<{ ok: boolean }>;
+  macroRun(id: string): Promise<{ ok: boolean; executed: number; message?: string }>;
+  macroStop(id: string): Promise<{ ok: boolean }>;
+  macrosRunning(): Promise<{ running: string[] }>;
+  /** Duplique une macro (nouveau nom, nouveaux identifiants). */
+  macroDuplicate(id: string): Promise<Macro | null>;
+  /** Journal d'execution, les plus recentes en tete. */
+  macroHistory(): Promise<MacroRunEntry[]>;
+  /** Vide le journal d'execution. */
+  macroHistoryClear(): Promise<{ ok: boolean }>;
+  /** Exporte les macros en JSON, pour les partager. */
+  macroExport(): Promise<string>;
+  /** Importe des macros depuis un JSON exporte. */
+  macroImport(raw: string): Promise<{ imported: number; message?: string }>;
+  /**
+   * Cree une macro a partir d'un modele.
+   *
+   * Le modele est construit avec les adresses et les scenes reellement
+   * presentes sur le poste : le resultat est utilisable tel quel.
+   */
+  macroFromTemplate(id: string, name: string): Promise<Macro | null>;
+
+  /**
+   * Ouvre une boite de dialogue pour choisir un fichier ou un dossier.
+   *
+   * Les blocs de macro qui demandent un chemin (son, dossier) proposent un
+   * bouton « Parcourir » : l'utilisateur choisit directement au lieu de devoir
+   * recopier un chemin a la main.
+   *
+   * @param kind 'file' pour un fichier, 'folder' pour un dossier.
+   * @returns le chemin absolu choisi, ou null si l'utilisateur annule.
+   */
+  macroPickPath(kind: 'file' | 'folder'): Promise<string | null>;
+  /**
+   * Lit un fichier de son et le renvoie en URL de donnees.
+   *
+   * Le rendu ne peut pas lire un fichier du disque directement : l'isolation
+   * du contexte et la politique de securite l'en empechent. Le processus
+   * principal lit donc le fichier et le transmet sous forme de `data:` URL, que
+   * le rendu joue avec un simple element audio.
+   *
+   * @returns une URL de donnees, ou null si le fichier est illisible ou trop
+   *   volumineux (un effet sonore reste petit).
+   */
+  macroReadSound(filePath: string): Promise<string | null>;
+
+  // --- Conducteur de spectacle ---------------------------------------------
+  showList(): Promise<ShowStep[]>;
+  showAdd(name: string, at: string, notes: string): Promise<ShowStep>;
+  showUpdate(id: string, patch: Partial<ShowStep>): Promise<{ ok: boolean }>;
+  showDelete(id: string): Promise<{ ok: boolean }>;
+  showReset(): Promise<{ ok: boolean }>;
+  showNext(): Promise<{ ok: boolean; step?: ShowStep; message?: string }>;
+
+  // --- Surveillance et analyse ---------------------------------------------
+  watchAlerts(): Promise<WatchAlert[]>;
+  watchAcknowledge(): Promise<{ ok: boolean }>;
+  watchReset(): Promise<{ ok: boolean }>;
+  diagnosticsList(): Promise<StreamDiagnostics[]>;
+
+  // --- Replay instantane ---------------------------------------------------
+  /** Sauvegarde une plage du tampon en MP4 (0 = derniere seconde du flux). */
+  replaySave(id: string, options?: { fromSeconds?: number; toSeconds?: number }): Promise<ReplayResult>;
+  /** Etat du replay : memoire disponible et pret (au moins le minimum). */
+  replayState(id: string): Promise<ReplayState>;
+  replayAvailable(id: string): Promise<{ seconds: number }>;
+  /** Ouvre le dossier des replays (cree au besoin). */
+  replayOpenFolder(): Promise<GatherResult>;
+  /** Choisit le dossier de sortie des replays. */
+  replayPickDir(): Promise<string | null>;
 
   // --- Fichiers de l'application -------------------------------------------
   storageList(): Promise<StorageEntry[]>;

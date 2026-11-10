@@ -85,6 +85,7 @@ export function buildMediamtxConfig(settings: MediamtxSettings): string {
     '  all_others:',
     '',
   ];
+
   return lines.join('\n');
 }
 

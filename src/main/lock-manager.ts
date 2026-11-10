@@ -106,6 +106,18 @@ export class LockManager {
   }
 
   /**
+   * Verifie un mot de passe sans deverrouiller.
+   *
+   * Sert aux macros : « verrouiller le poste » peut exiger le mot de passe,
+   * pour qu'une macro lancee par erreur n'enferme pas l'operateur dehors.
+   */
+  checkPassword(password: string): boolean {
+    const ui = this.settings.get().ui;
+    if (!ui.lockHash || !ui.lockSalt) return false;
+    return safeEqual(hashPassword(password, ui.lockSalt), ui.lockHash);
+  }
+
+  /**
    * Tente de deverrouiller.
    *
    * Si un mot de passe maitre est fourni par l'environnement, il ouvre

@@ -214,3 +214,618 @@ test('deux adresses ne peuvent pas porter le meme nom', () => {
   // Se renommer soi-meme reste possible.
   assert.equal(registry.update(other.id, { name: 'Cam 2' }).name, 'Cam 2');
 });
+
+/**
+ * Les chaines francaises doivent garder leurs apostrophes.
+ *
+ * Un traitement anterieur a supprime l'apostrophe des elisions (« Demande d
+ * acces » au lieu de « Demande d'acces »). Ce test relit le catalogue de
+ * traduction compile et refuse la reapparition du motif : un mot qui s'elide
+ * (d, l, n, s, j, c, m, t, qu...) suivi d'une espace au lieu d'une apostrophe.
+ */
+test('les traductions francaises gardent leurs apostrophes', () => {
+  const source = readFileSync(new URL('../src/shared/i18n.ts', import.meta.url), 'utf8');
+  const lines = source.split('\n');
+
+  // La table francaise va de `const fr = {` a sa fermeture.
+  const start = lines.findIndex((line) => line.startsWith('const fr = {'));
+  const end = lines.findIndex((line, index) => index > start && line.startsWith('} as const;'));
+  assert.ok(start >= 0 && end > start, 'la table francaise doit etre localisee');
+
+  const elisions = ['d', 'l', 'n', 's', 'j', 'c', 'm', 't', 'qu', 'jusqu', 'lorsqu', 'presqu', 'quelqu'];
+  const vowels = 'aeiouyàâäéèêëîïôöùûühAEIOUYÀÂÄÉÈÊËÎÏÔÖÙÛÜH';
+  const offenders = [];
+
+  for (let index = start; index < end; index += 1) {
+    const line = lines[index];
+    // On ne regarde que le contenu d'une chaine francaise.
+    const value = /:\s*(['"])(.*)\1,?\s*$/.exec(line.trim());
+    if (!value) continue;
+    const text = value[2];
+    for (const word of elisions) {
+      const pattern = new RegExp(`(^|[^\\w'\u2019])${word} [${vowels}]`);
+      if (pattern.test(text)) offenders.push(`${line.trim()}  (${word} + espace)`);
+    }
+  }
+
+  assert.deepEqual(offenders, [], `apostrophe manquante :\n${offenders.join('\n')}`);
+});
+
+/**
+ * Chaque libelle du catalogue de blocs doit exister dans les deux langues.
+ *
+ * Six blocs pointaient vers une cle ecrite en camelCase (`macro.kind.startStream`)
+ * alors que la traduction existait en forme tiret (`macro.kind.start-stream`) :
+ * la palette affichait donc la cle technique a la place du libelle. Ce test
+ * relit le catalogue et la table de traduction, et refuse toute cle manquante.
+ */
+test('chaque libelle du catalogue de blocs a sa traduction', () => {
+  const { BLOCKS, BLOCK_GROUPS, MACRO_CONDITIONS } = require('../dist-electron/shared/macro-blocks.js');
+  const i18n = readFileSync(new URL('../src/shared/i18n.ts', import.meta.url), 'utf8');
+  const lines = i18n.split('\n');
+
+  const collect = (marker) => {
+    const start = lines.findIndex((line) => line.startsWith(marker));
+    const end = lines.findIndex((line, index) => index > start && line.startsWith('} as const;'));
+    return new Set(
+      [...lines.slice(start, end).join('\n').matchAll(/^\s*'([^']+)':/gm)].map((match) => match[1]),
+    );
+  };
+  const fr = collect('const fr = {');
+  const en = collect('const en: Record<TranslationKey, string> = {');
+
+  const references = new Set();
+  for (const block of BLOCKS) {
+    references.add(block.label);
+    for (const field of block.fields) {
+      references.add(field.label);
+      if (field.hint) references.add(field.hint);
+    }
+  }
+  for (const group of BLOCK_GROUPS) references.add(group.label);
+  for (const condition of MACRO_CONDITIONS) references.add(condition.label);
+
+  const missingFr = [...references].filter((key) => !fr.has(key)).sort();
+  const missingEn = [...references].filter((key) => !en.has(key)).sort();
+  assert.deepEqual(missingFr, [], `cle francaise manquante : ${missingFr.join(', ')}`);
+  assert.deepEqual(missingEn, [], `cle anglaise manquante : ${missingEn.join(', ')}`);
+});
+
+/**
+ * Les champs « fichier » et « dossier » sont conserves par la validation.
+ *
+ * Le bug d'origine : une liste de champs ecrite a la main oubliait les nouveaux
+ * et les faisait disparaitre a l'enregistrement. La validation suit desormais le
+ * catalogue : ce test verifie qu'un chemin de son et un chemin de dossier
+ * survivent a `sanitizeMacroActions`.
+ */
+test('les champs fichier et dossier des blocs survivent a la validation', () => {
+  const { sanitizeMacroActions } = require('../dist-electron/shared/macro-sanitize.js');
+  const { BLOCKS } = require('../dist-electron/shared/macro-blocks.js');
+
+  const soundBlock = BLOCKS.find((block) => block.kind === 'sound');
+  const folderBlock = BLOCKS.find((block) => block.kind === 'open-folder');
+  assert.equal(soundBlock.fields[0].kind, 'file', 'le bloc son attend un fichier');
+  assert.equal(folderBlock.fields[0].kind, 'folder', 'le bloc dossier attend un dossier');
+
+  const cleaned = sanitizeMacroActions([
+    { kind: 'sound', soundPath: '/tmp/alerte.wav' },
+    { kind: 'open-folder', text: '/tmp/enregistrements' },
+  ]);
+  assert.equal(cleaned[0].soundPath, '/tmp/alerte.wav');
+  assert.equal(cleaned[1].text, '/tmp/enregistrements');
+});
+
+
+/**
+ * Les variables de macro doivent se resoudre avec les donnees du moment.
+ *
+ * Le defaut corrige : `expandVariables` n'etait jamais appele, et ne connaissait
+ * que `{date}` et `{heure}`. Aujourd'hui, chaque champ texte d'une action est
+ * relu juste avant son execution.
+ */
+test('les variables de macro sont remplacees par la valeur du moment', () => {
+  const { buildVariableMap, expandText, expandAction, formatDuration } = require('../dist-electron/shared/macro-resolve.js');
+
+  const values = buildVariableMap({
+    flux: {
+      id: 'abc',
+      name: 'Camera scene',
+      path: 'studio/cam1',
+      live: true,
+      width: 1920,
+      height: 1080,
+      bitrateKbps: 3000,
+      hasAudio: true,
+    },
+    streams: [
+      { id: 'a', name: 'Camera scene', path: 'studio/cam1', live: true },
+      { id: 'b', name: 'Retour', path: 'studio/retour', live: false },
+    ],
+    obs: { connected: true, currentScene: 'Programme', scenes: ['Generique', 'Programme'], sources: ['Micro'] },
+    now: new Date('2026-10-29T14:05:33'),
+  });
+
+  assert.equal(values.flux_nom, 'Camera scene');
+  assert.equal(values.flux_chemin, 'studio/cam1');
+  assert.equal(values.flux_resolution, '1920x1080');
+  assert.equal(values.flux_debit, '3000');
+  assert.equal(values.flux_debit_mbps, '3.0');
+  assert.equal(values.flux_live, 'True');
+  assert.equal(values.obs_scene, 'Programme');
+  assert.equal(values.liste_scenes, 'Generique, Programme');
+  assert.equal(values.nombre_flux, '2');
+  assert.equal(values.nombre_flux_live, '1');
+  assert.equal(values.liste_flux_hors_ligne, 'Retour');
+  assert.equal(values.date, '2026-10-29');
+  assert.equal(values.heure_courte, '14:05');
+
+  // Un alias anglais donne le meme resultat que le jeton francais.
+  assert.equal(values.current_flux_name, 'Camera scene');
+
+  // Un flux designe par son identifiant : {flux_nom_<id>}.
+  assert.equal(values.flux_nom_b, 'Retour');
+  assert.equal(values.stream_name_b, 'Retour');
+  assert.equal(values.flux_live_b, 'False');
+  assert.equal(values.flux_chemin_b, 'studio/retour');
+
+  // Le texte est remplace, y compris plusieurs variables d'affilee.
+  assert.equal(
+    expandText('Direct de {flux_nom} sur {obs_scene} a {heure_courte}.', values),
+    'Direct de Camera scene sur Programme a 14:05.',
+  );
+
+  // Un jeton inconnu reste visible : rien n'est perdu en silence.
+  assert.equal(expandText('Valeur : {inconnu}', values), 'Valeur : {inconnu}');
+
+  // Le remplacement descend dans les blocs imbriques.
+  const expanded = expandAction(
+    { kind: 'repeat', repeat: 2, text: '{flux_nom}', actions: [{ kind: 'log', text: '{obs_scene}' }] },
+    values,
+  );
+  assert.equal(expanded.text, 'Camera scene');
+  assert.equal(expanded.actions[0].text, 'Programme');
+
+  // Duree lisible, pour `{flux_duree}`.
+  assert.equal(formatDuration(2_537_000), '00:42:17');
+  assert.equal(formatDuration(0), '00:00:00');
+});
+
+/** Les modeles doivent etre construits et utilisables tels quels. */
+test('les modeles de macro se construisent sans erreur', () => {
+  const { MACRO_TEMPLATES } = require('../dist-electron/shared/macro-templates.js');
+  const { BLOCKS } = require('../dist-electron/shared/macro-blocks.js');
+  const { unknownVariables } = require('../dist-electron/shared/macro-variables.js');
+  const { sanitizeMacroActions } = require('../dist-electron/shared/macro-sanitize.js');
+
+  const known = new Set(BLOCKS.map((block) => block.kind));
+  assert.ok(MACRO_TEMPLATES.length >= 8, `${MACRO_TEMPLATES.length} modeles attendus`);
+
+  for (const template of MACRO_TEMPLATES) {
+    const actions = template.build({
+      streams: [{ id: 'a', name: 'Camera scene', path: 'studio/cam1' }],
+      scenes: ['Generique', 'Programme'],
+    });
+    assert.ok(actions.length > 0, `${template.id} doit produire des actions`);
+
+    // Chaque action du modele doit exister dans le catalogue.
+    const walk = (list, depth = 0) => {
+      for (const action of list) {
+        assert.ok(known.has(action.kind), `${template.id} : bloc inconnu « ${action.kind} »`);
+        assert.ok(unknownVariables(JSON.stringify(action)).length === 0, `${template.id} : variable inconnue`);
+        if (action.actions) walk(action.actions, depth + 1);
+      }
+    };
+    walk(actions);
+
+    // Et le modele doit survivre a la validation, sans perdre d'action.
+    const cleaned = sanitizeMacroActions(actions);
+    assert.equal(cleaned.length, actions.length, `${template.id} : actions perdues a la validation`);
+  }
+});
+
+/**
+ * Les comparaisons du bloc « condition ».
+ *
+ * Le defaut corrige : le bloc ne savait tester que des etats predefinis. Il
+ * compare desormais deux valeurs, avec les operateurs attendus, et les
+ * comparaisons de nombre convertissent les operandes.
+ */
+test('les comparaisons de condition sont correctes', () => {
+  const { compareValues, evaluateComparison } = require('../dist-electron/shared/macro-resolve.js');
+
+  assert.equal(compareValues('abc', 'equal', 'abc'), true);
+  assert.equal(compareValues('ABC', 'equal', 'abc'), true, 'la casse ne compte pas');
+  assert.equal(compareValues('abc', 'not-equal', 'abd'), true);
+  assert.equal(compareValues('camera scene', 'contains', 'scene'), true);
+  assert.equal(compareValues('camera scene', 'not-contains', 'micro'), true);
+  assert.equal(compareValues('studio/cam1', 'starts-with', 'studio'), true);
+  assert.equal(compareValues('studio/cam1', 'ends-with', 'cam1'), true);
+  assert.equal(compareValues('', 'is-empty', ''), true);
+  assert.equal(compareValues('x', 'is-not-empty', ''), true);
+
+  // Comparaisons de nombre : « 900 » est plus petit que « 1200 ».
+  assert.equal(compareValues('900', 'less-than', '1200'), true);
+  assert.equal(compareValues('1200', 'less-than', '900'), false);
+  assert.equal(compareValues('3000', 'more-than', '900'), true);
+  // Deux valeurs non numeriques ne se comparent pas en taille.
+  assert.equal(compareValues('abc', 'less-than', 'def'), false);
+
+  // Un booleen se compare a True / False.
+  assert.equal(compareValues('True', 'equal', 'true'), true);
+  assert.equal(compareValues('False', 'not-equal', 'true'), true);
+
+  // Le test complet resout les variables avant de comparer.
+  const values = { flux_debit: '750', flux_live: 'True' };
+  assert.equal(
+    evaluateComparison(
+      { kind: 'condition', conditionLeft: '{flux_debit}', conditionOperator: 'less-than', conditionRight: '900' },
+      values,
+      () => false,
+    ),
+    true,
+  );
+  assert.equal(
+    evaluateComparison(
+      { kind: 'condition', conditionLeft: '{flux_live}', conditionOperator: 'equal', conditionRight: 'True' },
+      values,
+      () => false,
+    ),
+    true,
+  );
+  // Sans comparaison libre, on retombe sur l'etat predefini.
+  assert.equal(
+    evaluateComparison({ kind: 'condition', condition: 'obs-connected' }, {}, (state) => state === 'obs-connected'),
+    true,
+  );
+});
+
+/**
+ * Le catalogue de variables doit rester coherent.
+ *
+ * Chaque variable declare ses portees, ses exemples sont traduisibles, et les
+ * variables de flux acceptent la forme designee `{flux_nom_<identifiant>}`.
+ */
+test('le catalogue de variables est coherent', () => {
+  const {
+    MACRO_VARIABLES,
+    variableFor,
+    streamIdFromToken,
+    variableMatchesScope,
+  } = require('../dist-electron/shared/macro-variables.js');
+  const { buildVariableMap } = require('../dist-electron/shared/macro-resolve.js');
+
+  // Chaque variable a un exemple, et un libelle traduit dans les deux langues.
+  const i18n = readFileSync(new URL('../src/shared/i18n.ts', import.meta.url), 'utf8');
+  const lines = i18n.split('\n');
+  const collect = (marker) => {
+    const start = lines.findIndex((line) => line.startsWith(marker));
+    const end = lines.findIndex((line, index) => index > start && line.startsWith('} as const;'));
+    return new Set([...lines.slice(start, end).join('\n').matchAll(/^\s*'([^']+)':/gm)].map((m) => m[1]));
+  };
+  const fr = collect('const fr = {');
+  const en = collect('const en: Record<TranslationKey, string> = {');
+  const missing = [];
+  for (const variable of MACRO_VARIABLES) {
+    if (!variable.sample) missing.push(`exemple:${variable.token}`);
+    if (!fr.has(`var.${variable.token}`)) missing.push(`fr:${variable.token}`);
+    if (!en.has(`var.${variable.token}`)) missing.push(`en:${variable.token}`);
+    if (!fr.has(`var.${variable.token}.desc`)) missing.push(`fr-desc:${variable.token}`);
+    if (!en.has(`var.${variable.token}.desc`)) missing.push(`en-desc:${variable.token}`);
+  }
+  assert.deepEqual(missing, [], `traductions ou exemples manquants : ${missing.join(', ')}`);
+
+  // Les jetons sont neutres : les deux formes francaises et anglaises marchent.
+  assert.ok(variableFor('flux_nom'));
+  assert.ok(variableFor('stream_name'), 'un alias anglais doit resoudre');
+  assert.ok(variableFor('nom_du_flux'), 'un alias francais doit resoudre');
+  assert.ok(variableFor('flux_nom_ab12'), 'la forme designee doit resoudre');
+
+  // L'identifiant d'un jeton designe est rendu.
+  assert.equal(streamIdFromToken('flux_nom_ab12'), 'ab12');
+  assert.equal(streamIdFromToken('flux_nom'), null);
+  assert.equal(streamIdFromToken('date'), null);
+
+  // Une variable de flux est proposee dans le contexte de flux, pas ailleurs.
+  const fluxNom = variableFor('flux_nom');
+  assert.equal(variableMatchesScope(fluxNom, 'stream'), true);
+  assert.equal(variableMatchesScope(fluxNom, 'alert'), true);
+  const alerteType = variableFor('alerte_type');
+  assert.equal(variableMatchesScope(alerteType, 'alert'), true);
+  assert.equal(variableMatchesScope(alerteType, 'startup'), false, 'une variable d alerte ne vaut pas au demarrage');
+
+  // Les booleens sortent en True / False, jamais en oui / non.
+  const values = buildVariableMap({
+    obs: { connected: true, recording: false },
+    mediamtx: { running: false },
+    poste: { locked: false },
+    now: new Date('2026-01-01T00:00:00'),
+  });
+  assert.equal(values.obs_connecte, 'True');
+  assert.equal(values.obs_enregistrement, 'False');
+  assert.equal(values.mediamtx_actif, 'False');
+  assert.equal(values.poste_verrouille, 'False');
+});
+
+/**
+ * Les limites de saisie suivent la fonction du champ.
+ *
+ * Un nom de scene reste court, un message peut etre long : la limite evite une
+ * saisie qui serait refusee plus tard.
+ */
+test('les champs de bloc declarent leurs limites', () => {
+  const { BLOCKS, FIELD_LIMITS } = require('../dist-electron/shared/macro-blocks.js');
+
+  const byKind = (kind) => BLOCKS.find((block) => block.kind === kind);
+  // Le message du journal accepte un texte long, et s'affiche sur plusieurs lignes.
+  const logField = byKind('log').fields.find((field) => field.key === 'text');
+  assert.equal(logField.maxLength, FIELD_LIMITS.message);
+  assert.equal(logField.multiline, true);
+
+  // Un nom de scene reste court.
+  const sceneField = byKind('create-scene').fields.find((field) => field.key === 'text');
+  assert.equal(sceneField.maxLength, FIELD_LIMITS.name);
+
+  // Un chemin est plus permissif qu'un nom.
+  assert.ok(FIELD_LIMITS.path > FIELD_LIMITS.name);
+
+  // Le bloc condition expose la comparaison complete.
+  const condition = byKind('condition');
+  const keys = condition.fields.map((field) => field.key);
+  assert.deepEqual(
+    keys,
+    ['conditionLeft', 'conditionOperator', 'conditionRight', 'condition', 'conditionOnFalse', 'conditionContinue'],
+  );
+  const elseField = condition.fields.find((field) => field.key === 'conditionOnFalse');
+  assert.equal(elseField.choices.length, 2, 'ignorer ou arreter');
+  assert.equal(condition.fields.find((field) => field.key === 'conditionContinue').default, true);
+});
+
+/**
+ * Le panneau distant distingue le telephone de l'ordinateur.
+ *
+ * Les deux n'ont pas la meme interface : le telephone affiche de grands
+ * boutons, l'ordinateur la vue complete des flux avec l'enregistrement dans le
+ * navigateur. Ce choix se fait sur l'en-tete User-Agent, cote serveur.
+ */
+test('la nature de l appareil est deduite du navigateur', () => {
+  const { describeDeviceKind } = require('../dist-electron/main/remote.js');
+
+  const iphone =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  const androidPhone =
+    'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36';
+  const androidTablet =
+    'Mozilla/5.0 (Linux; Android 13; SM-X700) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
+  const windows =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
+  const mac =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+
+  assert.equal(describeDeviceKind(iphone), 'phone');
+  assert.equal(describeDeviceKind(androidPhone), 'phone');
+  assert.equal(describeDeviceKind(androidTablet), 'desktop', 'une tablette n est pas un telephone');
+  assert.equal(describeDeviceKind(windows), 'desktop');
+  assert.equal(describeDeviceKind(mac), 'desktop');
+  assert.equal(describeDeviceKind(undefined), 'desktop', 'sans en-tete, on ne suppose pas un telephone');
+});
+
+/**
+ * Les autorisations du Remote retombent toutes sur `false`.
+ *
+ * Un reglage corrompu ou partiel ne doit jamais ouvrir un droit par accident :
+ * seul un booleen `true` explicite accorde l'autorisation.
+ */
+test('les autorisations du Remote refusent tout par defaut', () => {
+  const { sanitizeRemotePermissions } = require('../dist-electron/main/settings.js');
+
+  const empty = sanitizeRemotePermissions(undefined);
+  assert.deepEqual(empty, {
+    scenes: false,
+    recording: false,
+    download: false,
+    macros: false,
+    controls: false,
+  });
+
+  const partial = sanitizeRemotePermissions({ scenes: true, macros: 'oui' });
+  assert.equal(partial.scenes, true);
+  assert.equal(partial.macros, false, 'une valeur non booleenne est refusee');
+  assert.equal(partial.controls, false);
+});
+
+/**
+ * Les appareils et les autorisations survivent a la validation des reglages.
+ *
+ * Le defaut vise : un nouveau champ oublie dans la validation disparait a
+ * l'enregistrement, et la fonctionnalite devient silencieusement inoperante.
+ */
+test('les reglages du Remote survivent a la validation', () => {
+  const { sanitizeSettings, defaultSettings } = require('../dist-electron/main/settings.js');
+
+  const base = defaultSettings();
+  const clean = sanitizeSettings({
+    ...base,
+    remote: {
+      ...base.remote,
+      enabled: true,
+      phone: { scenes: true, recording: false, download: true, macros: true, controls: false },
+      desktop: { scenes: false, recording: true, download: true, macros: false, controls: true },
+      devices: [{ token: 'abc', name: 'iPhone', kind: 'phone', addedAt: 1 }],
+    },
+  });
+
+  assert.equal(clean.remote.enabled, true);
+  assert.deepEqual(clean.remote.phone, {
+    scenes: true,
+    recording: false,
+    download: true,
+    macros: true,
+    controls: false,
+  });
+  assert.deepEqual(clean.remote.desktop, {
+    scenes: false,
+    recording: true,
+    download: true,
+    macros: false,
+    controls: true,
+  });
+  assert.equal(clean.remote.devices[0].kind, 'phone', 'la nature de l appareil est conservee');
+
+  // Une nature inconnue est ecartee, pas recopiee telle quelle.
+  const odd = sanitizeSettings({
+    ...base,
+    remote: { ...base.remote, devices: [{ token: 'x', name: 'y', kind: 'inconnu', addedAt: 1 }] },
+  });
+  assert.equal(odd.remote.devices[0].kind, undefined);
+});
+
+/**
+ * La page de lecture ne deforme jamais l'image.
+ *
+ * Sans `object-fit: contain`, une camera dont l'image n'est pas au rapport du
+ * cadre (4/3, 16/10...) est etiree pour le remplir : le format est « ecrase ».
+ * Le defaut etait visible partout, et surtout dans la grille de scene OBS ou
+ * chaque flux occupe une cellule.
+ */
+test('la page de lecture conserve le format de l image', () => {
+  const { renderPlayerPage } = require('../dist-electron/main/player-page.js');
+
+  const page = renderPlayerPage({ name: 'Cam', path: 'live', version: '2.0.0', language: 'fr' });
+  assert.match(page, /video\s*\{[^}]*object-fit\s*:\s*contain/, 'le lecteur doit preserver le rapport');
+
+  // La version reduite (apercu integre, source OBS) doit aussi la conserver.
+  const compact = renderPlayerPage({ name: 'Cam', path: 'live', version: '2.0.0', language: 'fr', compact: true });
+  assert.match(compact, /object-fit\s*:\s*contain/);
+});
+
+/**
+ * Une scene OBS recoit la resolution de chaque cellule, pas celle du canevas.
+ *
+ * Le defaut corrige : chaque source navigateur etait creee a la taille du
+ * canevas (1920x1080) meme dans une grille, si bien qu'OBS recevait le mauvais
+ * format pour chaque flux. Deux flux cote a cote doivent donc demander 960x1080.
+ */
+test('la grille de scene donne a chaque flux la resolution de sa cellule', () => {
+  const { layoutCells } = require('../dist-electron/main/obs-controller.js');
+
+  const side = layoutCells(2, 1920, 1080);
+  assert.equal(side[0].width, 960);
+  assert.equal(side[1].width, 960);
+  assert.equal(side[0].height, 1080);
+
+  const quad = layoutCells(4, 1920, 1080);
+  assert.ok(quad.every((cell) => cell.width === 960 && cell.height === 540), JSON.stringify(quad));
+});
+
+/**
+ * Le concatenateur fMP4 corrige les temps de decodage et les numeros de
+ * sequence.
+ *
+ * Sans cela, la mise bout a bout brute de segments MediaMTX donne un fichier
+ * que le lecteur ne joue qu'en partie : chaque fragment redemarre son temps a
+ * zero. On construit ici deux fragments minimaux et on verifie que le second
+ * repart bien apres le premier, et qu'un seul en-tete d'initialisation est
+ * conserve.
+ */
+test('la concatenation fMP4 cumule les temps et garde un seul en-tete', () => {
+  const { concatFragmentedMp4 } = require('../dist-electron/main/fmp4.js');
+
+  // Fabrique une boite MP4 : taille (4) + type (4) + corps.
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  // Un fragment : mfhd + traf (tfhd + tfdt v1 + trun d'une image de duree 1000).
+  const fragment = (sequence, tfdt) => {
+    const mfhd = box('mfhd', Buffer.from([0, 0, 0, 0, 0, 0, 0, sequence]));
+    // tfhd : version+flags (0x020000 = default-base-is-moof), track_ID = 1.
+    const tfhd = box('tfhd', Buffer.from([2, 0, 0, 0, 0, 0, 0, 1]));
+    // tfdt v1 : version=1, flags=0, baseMediaDecodeTime sur 8 octets.
+    const tfdtBody = Buffer.alloc(12);
+    tfdtBody.writeUInt8(1, 0);
+    tfdtBody.writeBigUInt64BE(BigInt(tfdt), 4);
+    const tfdtBox = box('tfdt', tfdtBody);
+    // trun : version 0, flags 0x000301 (data_offset + sample_duration), 1 image.
+    const trunBody = Buffer.alloc(4 + 4 + 4 + 4);
+    trunBody.writeUInt32BE(0x000301, 0);
+    trunBody.writeUInt32BE(1, 4); // sample_count
+    trunBody.writeInt32BE(0, 8); // data_offset
+    trunBody.writeUInt32BE(1000, 12); // sample_duration
+    const trun = box('trun', trunBody);
+    const traf = box('traf', Buffer.concat([tfhd, tfdtBox, trun]));
+    return Buffer.concat([box('moof', Buffer.concat([mfhd, traf])), box('mdat', Buffer.alloc(16, 0xab))]);
+  };
+
+  const init = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), box('moov', Buffer.alloc(12, 0))]);
+  const merged = concatFragmentedMp4([Buffer.concat([init, fragment(0, 0)]), Buffer.concat([init, fragment(0, 0)])]);
+  assert.ok(merged, 'la concatenation doit produire un fichier');
+
+  // Un seul ftyp et un seul moov (ceux du premier segment).
+  const count = (needle) => {
+    let total = 0;
+    let offset = 0;
+    while (offset + 8 <= merged.length) {
+      const size = merged.readUInt32BE(offset);
+      const type = merged.toString('latin1', offset + 4, offset + 8);
+      if (type === needle) total += 1;
+      if (size < 8) break;
+      offset += size;
+    }
+    return total;
+  };
+  assert.equal(count('ftyp'), 1, 'un seul ftyp');
+  assert.equal(count('moov'), 1, 'un seul moov');
+
+  // Les deux fragments portent des temps croissants : 0 puis 1000.
+  const tfdtValues = [];
+  const sequences = [];
+  const scan = (start, end) => {
+    let offset = start;
+    while (offset + 8 <= end) {
+      const size = merged.readUInt32BE(offset);
+      const type = merged.toString('latin1', offset + 4, offset + 8);
+      if (size < 8 || offset + size > end) break;
+      if (type === 'moof') {
+        scan(offset + 8, offset + size);
+      } else if (type === 'traf') {
+        scan(offset + 8, offset + size);
+      } else if (type === 'tfdt') {
+        tfdtValues.push(Number(merged.readBigUInt64BE(offset + 12)));
+      } else if (type === 'mfhd') {
+        sequences.push(merged.readUInt32BE(offset + 12));
+      }
+      offset += size;
+    }
+  };
+  scan(0, merged.length);
+  assert.deepEqual(tfdtValues, [0, 1000], 'temps de decodage cumules');
+  assert.deepEqual(sequences, [1, 2], 'numeros de sequence croissants');
+});
+
+/**
+ * La plage d'un replay est bornee par la memoire et le minimum configures.
+ *
+ * On verifie la logique de selection sans toucher au disque : les fonctions
+ * pures de `replay.ts` sont testees ici, et la sauvegarde reelle l'est en e2e.
+ */
+test('les reglages de replay sont valides et bornes', () => {
+  const { defaultSettings, sanitizeSettings } = require('../dist-electron/main/settings.js');
+
+  const base = defaultSettings();
+  // Le minimum ne peut pas depasser la memoire : sinon aucun replay ne
+  // pourrait jamais etre produit.
+  const clean = sanitizeSettings({
+    ...base,
+    replay: { enabled: true, bufferSeconds: 20, minimumSeconds: 40, path: '', outputPath: '', },
+  });
+  // La memoire est remontee au minimum de 30 s, et le minimum est ramene a la
+  // memoire.
+  assert.ok(clean.replay.bufferSeconds >= 30, String(clean.replay.bufferSeconds));
+  assert.ok(clean.replay.minimumSeconds <= clean.replay.bufferSeconds, 'minimum <= memoire');
+  assert.equal(clean.replay.outputPath, '', 'dossier vide par defaut');
+});

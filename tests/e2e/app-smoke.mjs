@@ -37,7 +37,7 @@ try {
   const navLabels = await cdp.evaluate(
     'Array.from(document.querySelectorAll(".nav-item")).map(b => b.textContent)',
   );
-  check('navigation rendue (9 entrees)', Array.isArray(navLabels) && navLabels.length === 9, JSON.stringify(navLabels));
+  check('navigation rendue (13 entrees)', Array.isArray(navLabels) && navLabels.length === 13, JSON.stringify(navLabels));
 
   const brand = await cdp.evaluate('document.querySelector(".brand-text strong")?.textContent');
   check('marque affichee', brand === 'StreamControl', brand);

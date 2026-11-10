@@ -3,6 +3,7 @@ import type { StreamEndpointView } from '../../shared/types';
 import type { StreamControl } from '../hooks/useStreamControl';
 import { useTranslation } from '../hooks/useTranslation';
 import { StatusLed } from '../components/StatusLed';
+import { Icon, type IconName } from '../components/Icon';
 
 /** Valeurs a saisir dans OBS pour publier vers une adresse de StreamControl. */
 function obsIngest(endpoint: StreamEndpointView): { server: string; key: string } {
@@ -42,10 +43,10 @@ function CopyChip({ value }: { value: string }) {
  * des parametres, les URL de la premiere adresse de diffusion. Chaque etape dit
  * aussi si elle est deja satisfaite (OBS detecte, serveur joignable).
  */
-function ObsTutorial({ sc }: { sc: StreamControl }) {
+function ObsTutorial({ sc, defaultOpen = false }: { sc: StreamControl; defaultOpen?: boolean }) {
   const { t } = useTranslation();
   // Le tutoriel est replie par defaut : c'est un guide, pas l'ecran principal.
-  const [open, setOpen] = useState(sc.settings?.ui.obsTutorialOpen ?? false);
+  const [open, setOpen] = useState(defaultOpen || (sc.settings?.ui.obsTutorialOpen ?? false));
   const obs = sc.obs;
   const host = sc.settings?.obs.host ?? '127.0.0.1';
   const port = sc.settings?.obs.port ?? 4455;
@@ -142,19 +143,30 @@ function ObsTutorial({ sc }: { sc: StreamControl }) {
 }
 
 
+
+/** Sous-onglets de l'onglet OBS : une chose a la fois. */
+type ObsTab = 'live' | 'scenes' | 'studio' | 'help';
+
+const OBS_TABS: Array<{ id: ObsTab; icon: IconName; label: string }> = [
+  { id: 'live', icon: 'obs', label: 'obs.tabLive' },
+  { id: 'scenes', icon: 'streams', label: 'obs.tabScenes' },
+  { id: 'studio', icon: 'show', label: 'obs.tabStudio' },
+  { id: 'help', icon: 'guide', label: 'obs.tabHelp' },
+];
+
 export function ObsView({ sc }: { sc: StreamControl }) {
   const { t } = useTranslation();
   const obs = sc.obs;
-  const [configureResult, setConfigureResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [tab, setTab] = useState<ObsTab>('live');
   const [showSetup, setShowSetup] = useState(false);
   const [editingScene, setEditingScene] = useState<string | null>(null);
   const [newScene, setNewScene] = useState('');
 
+  const connected = obs.connected;
+
   /** Renseigne le service personnalise d'OBS avec notre adresse RTMP. */
   const configureObs = async () => {
-    setConfigureResult(null);
     const result = await window.streamcontrol.obsUseStreamControl();
-    setConfigureResult(result);
     sc.notify(result.ok ? 'ok' : 'err', result.message);
   };
 
@@ -167,8 +179,6 @@ export function ObsView({ sc }: { sc: StreamControl }) {
       setEditingScene(name);
     }
   };
-
-  const connected = obs.connected;
 
   return (
     <div className="content">
@@ -191,11 +201,51 @@ export function ObsView({ sc }: { sc: StreamControl }) {
           >
             {obs.connecting ? t('obs.connecting') : connected ? t('obs.disconnect') : t('obs.connect')}
           </button>
-          <button type="button" className="btn small ghost" onClick={() => setShowSetup(!showSetup)}>
-            {t('obs.setup')}
-          </button>
         </div>
       </div>
+
+      {/* --- Ce qui empeche de travailler, en premier -------------------- */}
+      {!connected ? (
+        <div className="panel obs-gate">
+          <div className="obs-gate-head">
+            <Icon name="obs" size={18} />
+            <div>
+              <strong>{t('obs.notConnectedTitle')}</strong>
+              <div className="hint">{t('obs.notConnectedBody')}</div>
+            </div>
+          </div>
+          <div className="btn-row" style={{ marginTop: 12 }}>
+            <button type="button" className="btn primary" disabled={obs.connecting} onClick={() => void sc.obsConnect()}>
+              {obs.connecting ? t('obs.connecting') : t('obs.connect')}
+            </button>
+            <button type="button" className="btn" onClick={() => void sc.launchObs()}>
+              {t('obs.launch')}
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setShowSetup(!showSetup)}>
+              {t('obs.helpSetup')}
+            </button>
+          </div>
+
+          {/* Le detail du reglage n'apparait que si on le demande. */}
+          {showSetup ? (
+            <div className="obs-setup">
+              <ol className="obs-steps">
+                <li>{t('obs.setupStep1')}</li>
+                <li>{t('obs.setupStep2')}</li>
+                <li>{t('obs.setupStep3', { host: obs.host, port: String(obs.port) })}</li>
+              </ol>
+              <div className="btn-row">
+                <button type="button" className="btn small primary" onClick={() => void sc.obsConnect()}>
+                  {t('obs.connect')}
+                </button>
+                <button type="button" className="btn small ghost" onClick={() => void sc.refreshPreflight(true)}>
+                  {t('obs.checkInstall')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {obs.authFailed ? (
         <div className="alert err">
@@ -206,194 +256,208 @@ export function ObsView({ sc }: { sc: StreamControl }) {
         </div>
       ) : null}
 
-      {obs.error && !obs.authFailed ? (
-        <div className="alert warn">
-          <div>{obs.error}</div>
-        </div>
-      ) : null}
+      {/* --- Sous-onglets : une chose a la fois -------------------------- */}
+      <div className="subtabs">
+        {OBS_TABS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            className={`subtab${tab === entry.id ? ' active' : ''}`}
+            onClick={() => setTab(entry.id)}
+          >
+            <Icon name={entry.icon} size={15} />
+            {t(entry.label as never)}
+            {entry.id === 'live' && obs.streaming ? <span className="subtab-dot live" aria-hidden /> : null}
+            {entry.id === 'live' && obs.recording ? <span className="subtab-dot rec" aria-hidden /> : null}
+          </button>
+        ))}
+      </div>
 
-      {showSetup ? (
-        <div className="panel" style={{ marginBottom: 14 }}>
-          <div className="panel-head">
-            <h2 className="panel-title">{t('obs.setup')}</h2>
-          </div>
-          <div className="btn-row">
-            <button type="button" className="btn" onClick={() => void sc.launchObs()}>
-              {t('obs.launch')}
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={!connected}
-              onClick={() => void configureObs()}
-            >
-              {t('obs.configure')}
-            </button>
-            <button type="button" className="btn ghost" onClick={() => void sc.refreshPreflight(true)}>
-              {t('obs.checkInstall')}
-            </button>
-          </div>
-          <div className="hint" style={{ marginTop: 8 }}>{t('obs.configureHint')}</div>
-          {configureResult ? (
-            <div className={`alert ${configureResult.ok ? 'ok' : 'warn'}`} style={{ marginTop: 10, marginBottom: 0 }}>
-              <div>{configureResult.message}</div>
-            </div>
-          ) : null}
-          <div className="alert" style={{ marginTop: 12, marginBottom: 0 }}>
+      {/* --- Diffusion --------------------------------------------------- */}
+      {tab === 'live' ? (
+        <div className="panel">
+          <div className="obs-live-state">
+            <span className={`led ${obs.streaming ? 'running' : ''}`} aria-hidden />
             <div>
-              {t('obs.serverNote')} <code>Outils &gt; WebSocket Server Settings</code>, {t('obs.serverNote2')}
+              <div className="stat-value" style={{ color: obs.streaming ? 'var(--rec)' : undefined }}>
+                {obs.streaming ? t('dashboard.liveUpper') : t('obs.stopped')}
+              </div>
+              <div className="muted" style={{ fontSize: 11.5 }}>
+                {obs.streaming ? t('obs.liveOnScene', { scene: obs.currentScene ?? '--' }) : t('obs.liveHint')}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
 
-      <div className="section-title">{t('obs.liveTitle')}</div>
-      <div className="panel obs-live">
-        <div className="obs-live-state">
-          <span className={`led ${obs.streaming ? 'running' : ''}`} aria-hidden />
-          <div>
-            <div className="stat-value" style={{ color: obs.streaming ? 'var(--rec)' : undefined }}>
-              {obs.streaming ? t('dashboard.liveUpper') : t('obs.stopped')}
-            </div>
-            <div className="muted" style={{ fontSize: 11.5 }}>
-              {obs.streaming
-                ? t('obs.liveOnScene', { scene: obs.currentScene ?? '--' })
-                : t('obs.liveHint')}
-            </div>
-          </div>
-        </div>
-        <div className="btn-row">
-          {obs.streaming ? (
+          <div className="btn-row" style={{ marginTop: 12 }}>
             <button
               type="button"
-              className="btn danger"
+              className={`btn ${obs.streaming ? 'danger' : 'primary'}`}
               disabled={!connected}
               onClick={() => void sc.obsToggle('streaming')}
             >
-              {t('obs.stopBroadcast')}
+              {obs.streaming ? t('obs.stopBroadcast') : t('obs.startBroadcast')}
             </button>
-          ) : null}
-          <button
-            type="button"
-            className={`btn ghost${obs.recording ? ' danger' : ''}`}
-            disabled={!connected}
-            onClick={() => void sc.obsToggle('recording')}
-          >
-            {obs.recording ? t('obs.stopRecording') : t('obs.startRecording')}
-          </button>
-        </div>
-      </div>
-
-      <div className="section-title">{t('obs.scenesTitle')}</div>
-      {!connected ? (
-        <div className="panel muted">{t('obs.connectToSee')}</div>
-      ) : (
-        <div className="scene-cards">
-          {obs.scenes.map((scene) => (
-            <button
-              key={scene.name}
-              type="button"
-              className={`scene-card${scene.active ? ' live' : ''}${editingScene === scene.name ? ' editing' : ''}`}
-              onClick={() => setEditingScene(scene.name)}
-            >
-              <span className="scene-card-name">{scene.name}</span>
-              {scene.active ? <span className="badge live">{t('studio.program')}</span> : null}
-              {scene.name === obs.previewScene ? <span className="badge">{t('studio.preview')}</span> : null}
-            </button>
-          ))}
-          <div className="scene-card new">
-            <input
-              className="input"
-              value={newScene}
-              placeholder={t('obs.newScenePlaceholder')}
-              onChange={(event) => setNewScene(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void createScene();
-              }}
-            />
             <button
               type="button"
-              className="btn small primary"
-              disabled={newScene.trim().length === 0}
-              onClick={() => void createScene()}
+              className={`btn ghost${obs.recording ? ' danger' : ''}`}
+              disabled={!connected}
+              onClick={() => void sc.obsToggle('recording')}
             >
-              {t('obs.newScene')}
+              {obs.recording ? t('obs.stopRecording') : t('obs.startRecording')}
             </button>
           </div>
+
+          <div className="hint" style={{ marginTop: 12 }}>{t('obs.liveNote')}</div>
+
+          {/* Reglage de la sortie : secondaire, donc replie. */}
+          <button
+            type="button"
+            className="obs-disclosure"
+            onClick={() => setShowSetup(!showSetup)}
+            aria-expanded={showSetup}
+          >
+            <span className="urls-caret">{showSetup ? '\u25BE' : '\u25B8'}</span>
+            {t('obs.outputSetup')}
+          </button>
+          {showSetup ? (
+            <div className="obs-setup">
+              <div className="btn-row">
+                <button type="button" className="btn small primary" disabled={!connected} onClick={() => void configureObs()}>
+                  {t('obs.configure')}
+                </button>
+                <button type="button" className="btn small ghost" onClick={() => void sc.launchObs()}>
+                  {t('obs.launch')}
+                </button>
+              </div>
+              <div className="hint" style={{ marginTop: 8 }}>{t('obs.configureHint')}</div>
+              <div className="hint" style={{ marginTop: 8 }}>
+                {t('obs.serverNote')} <code>Outils &gt; WebSocket Server Settings</code>, {t('obs.serverNote2')}
+              </div>
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
+
+      {/* --- Scenes ------------------------------------------------------ */}
+      {tab === 'scenes' ? (
+        <div className="panel">
+          <div className="hint">{t('obs.scenesHint')}</div>
+
+          {!connected ? (
+            <div className="muted" style={{ marginTop: 10 }}>{t('obs.connectToSee')}</div>
+          ) : (
+            <div className="scene-cards" style={{ marginTop: 10 }}>
+              {obs.scenes.map((scene) => (
+                <button
+                  key={scene.name}
+                  type="button"
+                  className={`scene-card${scene.active ? ' live' : ''}${editingScene === scene.name ? ' editing' : ''}`}
+                  onClick={() => setEditingScene(scene.name)}
+                >
+                  <span className="scene-card-name">{scene.name}</span>
+                  {scene.active ? <span className="badge live">{t('studio.program')}</span> : null}
+                  {scene.name === obs.previewScene ? <span className="badge">{t('studio.preview')}</span> : null}
+                </button>
+              ))}
+              <div className="scene-card new">
+                <input
+                  className="input"
+                  value={newScene}
+                  placeholder={t('obs.newScenePlaceholder')}
+                  onChange={(event) => setNewScene(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void createScene();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn small primary"
+                  disabled={newScene.trim().length === 0}
+                  onClick={() => void createScene()}
+                >
+                  {t('obs.newScene')}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="hint" style={{ marginTop: 12 }}>{t('obs.sceneClickHint')}</div>
+        </div>
+      ) : null}
+
+      {/* --- Studio ------------------------------------------------------ */}
+      {tab === 'studio' ? (
+        <div className="panel">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={obs.studioMode}
+              disabled={!connected}
+              onChange={(event) => void sc.obsSetStudioMode(event.target.checked)}
+            />
+            {t('studio.enable')}
+          </label>
+          <div className="hint" style={{ marginTop: 6 }}>{t('studio.intro')}</div>
+
+          {obs.studioMode ? (
+            <>
+              <div className="studio-grid" style={{ marginTop: 14 }}>
+                <div className="studio-stage">
+                  <div className="studio-stage-head">
+                    <span className="badge">{t('studio.preview')}</span>
+                  </div>
+                  <div className="studio-stage-scene">{obs.previewScene ?? t('studio.none')}</div>
+                </div>
+                <button
+                  type="button"
+                  className="studio-go"
+                  onClick={() => void sc.obsTransition()}
+                  title={t('studio.goHint')}
+                >
+                  <span aria-hidden>&#10132;</span>
+                  {t('studio.go')}
+                </button>
+                <div className="studio-stage program">
+                  <div className="studio-stage-head">
+                    <span className="badge live">{t('studio.program')}</span>
+                  </div>
+                  <div className="studio-stage-scene">{obs.currentScene ?? t('studio.none')}</div>
+                </div>
+              </div>
+
+              <div className="field" style={{ marginTop: 14 }}>
+                <span>{t('studio.pickPreview')}</span>
+                <div className="scene-list">
+                  {obs.scenes.map((scene) => (
+                    <button
+                      key={scene.name}
+                      type="button"
+                      className={`scene-btn${scene.name === obs.previewScene ? ' active' : ''}`}
+                      onClick={() => void sc.obsSetPreviewScene(scene.name)}
+                    >
+                      {scene.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <TransitionControls sc={sc} />
+            </>
+          ) : (
+            <div className="muted" style={{ marginTop: 10 }}>{t('studio.enableHint')}</div>
+          )}
+        </div>
+      ) : null}
+
+      {/* --- Aide -------------------------------------------------------- */}
+      {tab === 'help' ? <ObsTutorial sc={sc} defaultOpen /> : null}
 
       {editingScene ? (
         <SceneEditor sc={sc} sceneName={editingScene} onClose={() => setEditingScene(null)} />
       ) : null}
-
-      <div className="section-title">{t('studio.title')}</div>
-      <div className="panel">
-        <p className="update-intro">{t('studio.intro')}</p>
-
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={obs.studioMode}
-            disabled={!connected}
-            onChange={(event) => void sc.obsSetStudioMode(event.target.checked)}
-          />
-          {t('studio.enable')}
-        </label>
-
-        {obs.studioMode ? (
-          <>
-            <div className="studio-grid">
-              <div className="studio-stage">
-                <div className="studio-stage-head">
-                  <span className="badge">{t('studio.preview')}</span>
-                </div>
-                <div className="studio-stage-scene">{obs.previewScene ?? t('studio.none')}</div>
-              </div>
-              <button
-                type="button"
-                className="studio-go"
-                onClick={() => void sc.obsTransition()}
-                title={t('studio.goHint')}
-              >
-                <span aria-hidden>&#10132;</span>
-                {t('studio.go')}
-              </button>
-              <div className="studio-stage program">
-                <div className="studio-stage-head">
-                  <span className="badge live">{t('studio.program')}</span>
-                </div>
-                <div className="studio-stage-scene">{obs.currentScene ?? t('studio.none')}</div>
-              </div>
-            </div>
-
-            <div className="field" style={{ marginTop: 12 }}>
-              <span>{t('studio.pickPreview')}</span>
-              <div className="scene-list">
-                {obs.scenes.map((scene) => (
-                  <button
-                    key={scene.name}
-                    type="button"
-                    className={`scene-btn${scene.name === obs.previewScene ? ' active' : ''}`}
-                    onClick={() => void sc.obsSetPreviewScene(scene.name)}
-                  >
-                    {scene.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <TransitionControls sc={sc} />
-          </>
-        ) : null}
-      </div>
-
-      <ObsTutorial sc={sc} />
-
     </div>
   );
 }
-
 
 /**
  * Reglages de transition.
@@ -462,7 +526,8 @@ function SceneEditor({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [selected, setSelected] = useState<string[]>([]);
+  /** Flux choisis, dans l'ordre, avec leur etat actif (desactive = cellule noire). */
+  const [selected, setSelected] = useState<Array<{ id: string; enabled: boolean }>>([]);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -481,7 +546,7 @@ function SceneEditor({
         if (previous.length > 0) return previous;
         return sc.streams
           .filter((endpoint) => names.includes(endpoint.name))
-          .map((endpoint) => endpoint.id);
+          .map((endpoint) => ({ id: endpoint.id, enabled: true }));
       });
       setLoaded(true);
     });
@@ -492,12 +557,20 @@ function SceneEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sceneName]);
 
+
   const toggle = (id: string) => {
     setSelected((previous) => {
-      if (previous.includes(id)) return previous.filter((entry) => entry !== id);
+      if (previous.some((entry) => entry.id === id)) return previous.filter((entry) => entry.id !== id);
       if (previous.length >= 4) return previous;
-      return [...previous, id];
+      return [...previous, { id, enabled: true }];
     });
+  };
+
+  /** Active ou desactive un flux deja choisi : desactive = cellule noire. */
+  const toggleEnabled = (id: string) => {
+    setSelected((previous) =>
+      previous.map((entry) => (entry.id === id ? { ...entry, enabled: !entry.enabled } : entry)),
+    );
   };
 
   /**
@@ -514,11 +587,13 @@ function SceneEditor({
       if (!result.ok) return;
 
       if (goLive) {
-        // La scene configuree devient celle qui part en direct.
+        // La scene configuree devient celle qui part en direct. On DEMARRE la
+        // diffusion si besoin, sans jamais la basculer : « mettre en direct »
+        // ne doit pas couper un direct deja en cours.
         await sc.obsSetScene(sceneName);
         const configured = await window.streamcontrol.obsUseStreamControl();
         if (!configured.ok) sc.notify('warn', configured.message);
-        await sc.obsToggle('streaming');
+        await sc.obsStartStreaming();
       }
       onClose();
     } finally {
@@ -543,19 +618,30 @@ function SceneEditor({
           ) : (
             <div className="pick-list">
               {sc.streams.map((endpoint) => {
-                const order = selected.indexOf(endpoint.id);
+                const entry = selected.find((item) => item.id === endpoint.id);
+                const order = entry ? selected.indexOf(entry) : -1;
                 return (
-                  <button
+                  <div
                     key={endpoint.id}
-                    type="button"
-                    className={`pick-item${order >= 0 ? ' selected' : ''}`}
-                    onClick={() => toggle(endpoint.id)}
+                    className={`pick-item${order >= 0 ? ' selected' : ''}${entry && !entry.enabled ? ' off' : ''}`}
                   >
-                    <span className="pick-order">{order >= 0 ? order + 1 : ''}</span>
-                    <span className="pick-name">{endpoint.name}</span>
-                    <span className="pick-path">/{endpoint.path}</span>
-                    <span className={`led ${endpoint.status.publishing ? 'running' : ''}`} aria-hidden />
-                  </button>
+                    <button type="button" className="pick-main" onClick={() => toggle(endpoint.id)}>
+                      <span className="pick-order">{order >= 0 ? order + 1 : ''}</span>
+                      <span className="pick-name">{endpoint.name}</span>
+                      <span className="pick-path">/{endpoint.path}</span>
+                      <span className={`led ${endpoint.status.publishing ? 'running' : ''}`} aria-hidden />
+                    </button>
+                    {order >= 0 ? (
+                      <button
+                        type="button"
+                        className={`pick-toggle${entry?.enabled ? ' on' : ''}`}
+                        onClick={() => toggleEnabled(endpoint.id)}
+                        title={entry?.enabled ? t('scene.disableHint') : t('scene.enableHint')}
+                      >
+                        {entry?.enabled ? t('scene.enabled') : t('scene.disabled')}
+                      </button>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -567,7 +653,10 @@ function SceneEditor({
             {t('scene.previewHint', { count: selected.length })}
           </div>
           <ScenePreview
-            cells={selected.map((id) => sc.streams.find((endpoint) => endpoint.id === id)?.name ?? '')}
+            cells={selected.map((entry) => ({
+              name: sc.streams.find((endpoint) => endpoint.id === entry.id)?.name ?? '',
+              enabled: entry.enabled,
+            }))}
           />
         </div>
       </div>
@@ -604,16 +693,20 @@ function SceneEditor({
  * On affiche le nom de chaque flux dans sa cellule : l'utilisateur voit
  * exactement quelle adresse ira ou, avant de valider.
  */
-function ScenePreview({ cells }: { cells: string[] }) {
+function ScenePreview({ cells }: { cells: Array<{ name: string; enabled: boolean }> }) {
   const { t } = useTranslation();
   if (cells.length === 0) {
     return <div className="scene-preview empty">{t('scene.empty')}</div>;
   }
   return (
     <div className={`scene-preview cells-${cells.length}`}>
-      {cells.map((name, index) => (
-        <span key={`${name}-${index}`} className="scene-cell">
-          {name}
+      {cells.map((cell, index) => (
+        <span
+          key={`${cell.name}-${index}`}
+          className={`scene-cell${cell.enabled ? '' : ' off'}`}
+          title={cell.enabled ? cell.name : t('scene.disabledCell')}
+        >
+          {cell.enabled ? cell.name : t('scene.black')}
         </span>
       ))}
     </div>
