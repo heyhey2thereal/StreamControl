@@ -106,7 +106,7 @@ export function useStreamControl() {
   const noticeId = useRef(0);
   /** Identifiants des bulles de macro, pour les retirer une a une. */
   const macroNoticeId = useRef(0);
-  const maxLogLines = state.settings?.ui.maxLogLines ?? 2000;
+  const maxLogLines = state.settings?.ui.maxLogLines ?? 500;
 
   /**
    * Traduit une cle dans la langue courante.
@@ -686,6 +686,27 @@ export function useStreamControl() {
     [api, notify, tr],
   );
 
+  /** Supprime une scene dans OBS. */
+  const obsDeleteScene = useCallback(
+    async (name: string): Promise<{ ok: boolean; message: string }> => {
+      try {
+        const result = await api.obsDeleteScene(name);
+        if (result.ok) {
+          notify('warn', result.message);
+          void api.obsGetStatus().then((obs) => setState((previous) => ({ ...previous, obs })));
+        } else {
+          notify('err', result.message);
+        }
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        notify('err', message);
+        return { ok: false, message };
+      }
+    },
+    [api, notify],
+  );
+
   const downloadMediamtx = useCallback(async (): Promise<UpdateResult | null> => {
     notify('warn', tr('note.mediamtxDownloading'));
     try {
@@ -1035,6 +1056,7 @@ export function useStreamControl() {
       obsToggle,
       obsStartStreaming,
       obsCreateScene,
+      obsDeleteScene,
       obsSetStudioMode,
       obsSetPreviewScene,
       obsTransition,

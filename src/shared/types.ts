@@ -1086,6 +1086,8 @@ export interface StreamControlApi {
   ): Promise<{ ok: boolean; message: string }>;
   /** Noms des adresses deja affichees par une scene. */
   obsSceneStreams(sceneName: string): Promise<string[]>;
+  /** Supprime une scene OBS. */
+  obsDeleteScene(name: string): Promise<{ ok: boolean; message: string }>;
 
   // --- Verrouillage --------------------------------------------------------
   lockState(): Promise<LockState>;

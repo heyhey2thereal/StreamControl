@@ -7,7 +7,7 @@
  * l'enregistrement fonctionne meme sans OBS.
  *
  * Le dossier est celui des parametres (`recording.path`), sinon un sous-dossier
- * `recordings` du dossier de rangement : c'est celui que « Ouvrir le dossier »
+ * `records` du dossier de rangement : c'est celui que « Ouvrir le dossier »
  * ouvre depuis les Parametres.
  */
 import { promises as fs } from 'node:fs';
@@ -19,12 +19,13 @@ import { defaultStorageDir } from './storage';
 /**
  * Dossier d'enregistrement par defaut.
  *
- * Il vit DANS le dossier de rangement : c'est celui que « Ouvrir le dossier »
- * ouvre depuis les Parametres. Un dossier separe donnait l'impression que rien
- * n'avait ete enregistre, alors que les fichiers existaient ailleurs.
+ * Il vit DANS le dossier de rangement, sous `records` : c'est celui que
+ * « Ouvrir le dossier » ouvre depuis les Parametres. Un dossier separe donnait
+ * l'impression que rien n'avait ete enregistre, alors que les fichiers
+ * existaient ailleurs.
  */
 export function defaultRecordingDir(): string {
-  return path.join(defaultStorageDir(), 'recordings');
+  return path.join(defaultStorageDir(), 'records');
 }
 
 /** Resout le dossier d'enregistrement effectif. */

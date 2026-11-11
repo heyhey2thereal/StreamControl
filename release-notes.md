@@ -37,6 +37,44 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 
 ## Corrections
 
+- **Compatibilite MediaMTX.** Le demarrage echouait selon la version livree (le
+  drapeau de validation interne n'existait pas sous cette forme). La validation
+  se fait desormais en observant le demarrage reel, et le message d'erreur cite
+  la sortie de MediaMTX. Le champ `hlsAllowOrigins` (dont le nom a change selon
+  les versions) est retire : un nom inconnu faisait refuser toute la
+  configuration.
+
+- **OBS : « Appliquer et diffuser » ne lance plus rien tout seul.** Le bouton
+  configure la scene et la met au **programme**, sans demarrer la diffusion ni
+  l'enregistrement : ce sont deux actions distinctes.
+
+- **OBS : supprimer une scene depuis StreamControl**, avec confirmation.
+
+- **OBS : plus de sources qui s'accumulent.** Reconfigurer une scene laissait la
+  source precedente dans la liste globale d'OBS (« deux mille sources web ») :
+  les sources inutilisees sont desormais supprimees.
+
+- **Replay : plus de rafraichissement aleatoire.** Le clip du tampon n'est plus
+  remplace toutes les 20 s (ce qui relancait la lecture au milieu de l'extrait).
+  Un bouton **Actualiser** recharge l'apercu et la pellicule a la demande.
+
+- **Replay : deplacer toute la selection.** On peut saisir la selection et la
+  faire glisser a gauche ou a droite, sans changer sa duree. Valable sur le
+  poste et sur le panneau distant.
+
+- **Pellicule : une vignette toutes les 5 secondes**, plus grandes et lisibles.
+  L'apercu agrandi au survol n'est plus coupe par le cadre.
+
+- **Statut des flux : plus de faux « ne recoit rien ».** Un hoquet de l'API
+  MediaMTX ne faisait plus passer tous les flux hors ligne un instant.
+
+- **Enregistrements dans un dossier `records`**, un sous-dossier par adresse de
+  flux. Les tampons de replay des flux supprimes sont nettoyes au demarrage.
+
+- **Moins de memoire et de disque.** L'assemblage des fichiers MP4 ecrit au fur
+  et a mesure au lieu de charger tous les segments en memoire ; le HLS n'est plus
+  remuxe en continu ; le journal par defaut passe a 500 lignes.
+
 - **Une cellule de scène montrait la vidéo d'un autre flux.** Deux sources de
   même origine pouvaient partager le cache du navigateur d'OBS. Chaque source
   porte désormais un paramètre unique, et la page est rechargée quand la scène

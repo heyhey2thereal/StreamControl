@@ -80,7 +80,7 @@ export async function listStorageEntries(configuredDir: string): Promise<Storage
       key: 'recordings',
       label: 'Enregistrements',
       current: resolveRecordingDir(''),
-      folder: 'recordings',
+      folder: 'records',
     },
   ];
 

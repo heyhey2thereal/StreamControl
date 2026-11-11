@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { promises as fs } from 'node:fs';
@@ -65,6 +65,14 @@ export class MediamtxManager extends EventEmitter {
   private readonly restartTimestamps: number[] = [];
   private stoppingIntentionally = false;
   private lastResolvedBinary: string | null = null;
+  /**
+   * Dernieres lignes de sortie de MediaMTX.
+   *
+   * Sert a expliquer un arret immediat : une configuration refusee fait mourir
+   * le processus, et c'est ce message qui dit quoi corriger. On ne garde que
+   * les dernieres lignes, pour ne pas retenir tout le journal en memoire.
+   */
+  private recentOutput: string[] = [];
 
   constructor(
     private readonly logger: Logger,
@@ -87,11 +95,17 @@ export class MediamtxManager extends EventEmitter {
    *
    * C'est la seule source fiable : le journal dit qu'une publication a ete
    * acceptee, l'API dit si le flux est reellement en ligne et quelles sont ses
-   * dimensions. Un echec de lecture n'est pas une erreur : MediaMTX est
-   * peut-etre simplement arrete, et l'appelant traite la liste vide.
+   * dimensions.
+   *
+   * @returns la liste des chemins, ou **null** quand l'API n'a pas pu etre lue.
+   *   La distinction est essentielle : une lecture ratee (delai depasse, API
+   *   momentanement occupee pendant une reconfiguration) ne doit PAS etre prise
+   *   pour « aucun flux ne publie ». Sans cela, tous les flux passaient hors
+   *   ligne un instant, puis revenaient : c'est le defaut « les deux disent
+   *   qu'ils ne recoivent rien, puis ca remarche ».
    */
-  async fetchPaths(): Promise<MediamtxPathState[]> {
-    if (this.status.state !== 'running') return [];
+  async fetchPaths(): Promise<MediamtxPathState[] | null> {
+    if (this.status.state !== 'running') return null;
 
     const port = this.settings.get().mediamtx.apiPort;
 
@@ -105,6 +119,11 @@ export class MediamtxManager extends EventEmitter {
         // qui dit quels flux sont en cours d'enregistrement.
         this.apiGet<{ items?: Array<Record<string, unknown>> }>(port, '/v3/config/paths/list'),
       ]);
+
+      // La liste des chemins est la source principale : si elle n'a pas pu
+      // etre lue, on ne sait rien, et on le dit (null) plutot que d'annoncer
+      // que tout est hors ligne.
+      if (paths === null) return null;
 
       // Une entree par chemin publie : adresse et logiciel de la source.
       const publishers = new Map<string, { remoteAddr?: string; userAgent?: string }>();
@@ -122,7 +141,7 @@ export class MediamtxManager extends EventEmitter {
       // Attention : quand le replay instantane est actif, MediaMTX enregistre
       // lui aussi en continu (c'est le principe du tampon). On distingue les
       // deux par le dossier : le tampon vit dans « replay-buffer », un vrai
-      // enregistrement dans « recordings ». Sans cette distinction, tous les
+      // enregistrement dans « records ». Sans cette distinction, tous les
       // flux afficheraient « REC » des que le replay est active.
       const recording = new Map<string, string>();
       for (const entry of configPaths?.items ?? []) {
@@ -142,7 +161,9 @@ export class MediamtxManager extends EventEmitter {
         const publisher = publishers.get(name);
         return {
           name,
-          online: item.online === true,
+          // MediaMTX 1.14+ renomme `online` en `ready` ; les deux sont acceptes
+          // pour rester compatible avec les versions anterieures.
+          online: item.online === true || item.ready === true,
           tracks: Array.isArray(item.tracks) ? (item.tracks as string[]) : [],
           width: videoProps?.width,
           height: videoProps?.height,
@@ -155,8 +176,8 @@ export class MediamtxManager extends EventEmitter {
         };
       });
     } catch {
-      // API injoignable : le flux n'est simplement pas en ligne.
-      return [];
+      // API injoignable : on ne sait pas, donc on ne conclut rien.
+      return null;
     }
   }
 
@@ -326,14 +347,11 @@ export class MediamtxManager extends EventEmitter {
     }
 
     // MediaMTX attend le chemin de configuration en argument positionnel.
-    const validation = await this.validateConfig(binary, configPath);
-    if (!validation.ok) {
-      const message = `Configuration MediaMTX refusee : ${validation.message}`;
-      this.logger.error('mediamtx', message);
-      this.setStatus({ state: 'error', detail: message });
-      return { ok: false, status: this.getStatus(), message };
-    }
-
+    // Il n'expose PAS de drapeau de validation (aucune version publiee ne
+    // connait `--validate-conf` : il renvoie une erreur d'usage et un code 80,
+    // ce qui faisait echouer TOUS les demarrages). Une configuration refusee se
+    // manifeste donc par un arret immediat du processus : c'est le demarrage
+    // lui-meme qui valide, et `startProcess` rapporte l'erreur exacte.
     const workingDirectory = path.dirname(binary);
     this.logger.info('mediamtx', `Demarrage : "${binary}" "${configPath}"`);
 
@@ -362,6 +380,9 @@ export class MediamtxManager extends EventEmitter {
 
       this.child = child;
       this.lastResolvedBinary = binary;
+      // Nouveau demarrage : on repart d'une sortie vierge, sinon l'erreur d'un
+      // essai precedent serait attribuee a celui-ci.
+      this.recentOutput = [];
 
       const startupTimer = setTimeout(() => {
         this.setStatus({
@@ -411,41 +432,15 @@ export class MediamtxManager extends EventEmitter {
         }
 
         if (!settled) {
-          const message = `MediaMTX s'est arrete immediatement (${reason}). Verifiez la configuration et les ports.`;
+          const detail = this.recentOutput.slice(-3).join(' ').slice(0, 300);
+          const message =
+            "MediaMTX s'est arrete immediatement : configuration refusee ou invalide " +
+            `(${reason}).` +
+            (detail ? ` Detail : ${detail}` : ' Verifiez la configuration et les ports.');
           this.setStatus({ state: 'error', detail: message });
           finish({ ok: false, status: this.getStatus(), message });
         }
       });
-    });
-  }
-
-  /**
-   * Demande a MediaMTX de valider le fichier de configuration.
-   * Un fichier refuse fait echouer immediatement le demarrage avec un
-   * message precis, au lieu de laisser le processus mourir en silence.
-   */
-  private async validateConfig(
-    binary: string,
-    configPath: string,
-  ): Promise<{ ok: boolean; message: string }> {
-    return new Promise((resolve) => {
-      execFile(
-        binary,
-        ['--validate-conf', configPath],
-        { timeout: 8000, windowsHide: true },
-        (error, stdout, stderr) => {
-          if (!error) {
-            resolve({ ok: true, message: 'configuration valide' });
-            return;
-          }
-          const detail = `${stdout}\n${stderr}`
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .join(' ');
-          resolve({ ok: false, message: detail || error.message });
-        },
-      );
     });
   }
 
@@ -463,6 +458,11 @@ export class MediamtxManager extends EventEmitter {
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line) continue;
+
+      // On retient les dernieres lignes : c'est ce qui explique un arret
+      // immediat (configuration refusee). Le tableau est borne pour la memoire.
+      this.recentOutput.push(line);
+      if (this.recentOutput.length > 20) this.recentOutput.shift();
 
       // Une connexion refusee est traduite en message actionnable : le texte de
       // MediaMTX ne dit pas quoi corriger.

@@ -35,10 +35,18 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
    * Clip du tampon prepare pour l'apercu et la pellicule : son jeton et sa
    * duree. Le fichier n'est jamais remplace, donc la lecture tient pendant le
    * direct.
+   *
+   * On le prepare UNE FOIS par flux, et a la demande (bouton « Actualiser ») :
+   * le re-preparer en boucle remplacait la source du lecteur toutes les
+   * quelques secondes, ce qui relancait la video au milieu de la lecture —
+   * c'etait le « rafraichissement aleatoire » constate.
    */
   const [clip, setClip] = useState<{ url: string; seconds: number } | null>(null);
+  const [clipNonce, setClipNonce] = useState(0);
   const barRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef<'start' | 'end' | null>(null);
+  const dragging = useRef<'start' | 'end' | 'select' | null>(null);
+  /** Ecart entre le curseur et la poignee de debut, pour un deplacement fluide. */
+  const selectOffset = useRef(0);
 
   const memory = sc.settings?.replay.bufferSeconds ?? 60;
   const minimum = sc.settings?.replay.minimumSeconds ?? 30;
@@ -77,9 +85,9 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   // Prepare un clip du tampon pour le flux selectionne.
   //
   // Le clip est fige (jeton) : la lecture ne casse donc pas quand le tampon
-  // avance. On en prepare un nouveau quand on change de flux, et de temps en
-  // temps pour suivre le direct — mais sans jamais remplacer celui qui est en
-  // cours de lecture, qui reste servi sur son propre jeton.
+  // avance. On en prepare un nouveau quand on change de flux, ou quand
+  // l'operateur clique « Actualiser ». On ne le remplace JAMAIS tout seul :
+  // le remplacement periodique relancait la lecture au milieu de l'extrait.
   const clipBase = selected?.urls.replayClip ?? '';
   useEffect(() => {
     if (!clipBase || !enabled) {
@@ -100,12 +108,10 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
       }
     };
     void prepare();
-    const timer = setInterval(() => void prepare(), 20000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
     };
-  }, [clipBase, enabled]);
+  }, [clipBase, enabled, clipNonce]);
 
   // La barre represente la memoire configuree : c'est la duree maximale d'un
   // replay. On borne la duree disponible a cette valeur : un tampon residuel
@@ -159,8 +165,29 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
     const rect = barRef.current.getBoundingClientRect();
     const ratio = (event.clientX - rect.left) / rect.width;
     const value = secondsFromRatio(ratio);
-    if (dragging.current === 'start') setStartAgo(Math.max(endAgo, Math.min(reachable, value)));
-    else setEndAgo(Math.max(0, Math.min(startAgo, value)));
+    if (dragging.current === 'start') {
+      setStartAgo(Math.max(endAgo, Math.min(reachable, value)));
+    } else if (dragging.current === 'end') {
+      setEndAgo(Math.max(0, Math.min(startAgo, value)));
+    } else {
+      // Deplacement de TOUTE la selection : on conserve sa largeur et on la
+      // fait glisser. Sans cela, on ne pouvait qu'etendre une poignee, jamais
+      // deplacer l'extrait choisi vers la gauche ou la droite.
+      const width = startAgo - endAgo;
+      const nextStart = Math.max(width, Math.min(reachable, value + selectOffset.current));
+      setStartAgo(nextStart);
+      setEndAgo(nextStart - width);
+    }
+  };
+
+  /** Saisit la selection entiere pour la faire glisser. */
+  const beginSelectDrag = (event: React.PointerEvent) => {
+    if (!barRef.current) return;
+    const rect = barRef.current.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    selectOffset.current = startAgo - secondsFromRatio(ratio);
+    dragging.current = 'select';
+    event.preventDefault();
   };
 
   const stopDrag = () => { dragging.current = null; };
@@ -240,6 +267,15 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           >
             <Icon name="trash" size={14} /> {t('replay.clearBuffer')}
           </button>
+          <button
+            type="button"
+            className="btn small ghost"
+            disabled={!selected || !clipBase}
+            onClick={() => setClipNonce((value) => value + 1)}
+            title={t('replay.refreshHint')}
+          >
+            <Icon name="refresh" size={14} /> {t('replay.refresh')}
+          </button>
           <button type="button" className="btn small ghost" onClick={() => void sc.openReplayFolder()}>
             <Icon name="files" size={14} /> {t('replay.openFolder')}
           </button>
@@ -313,10 +349,13 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
             {/* Tete de lecture : bord droit du remplissage, donc elle avance
                 vers la droite. */}
             <div className="replay-playhead" style={{ left: playheadLeft }} aria-hidden />
-            {/* Selection entre les deux poignees. */}
+            {/* Selection entre les deux poignees. On peut la SAISIR pour la
+                deplacer entiere (a gauche ou a droite), sans changer sa duree. */}
             <div
               className="replay-bar-select"
               style={{ left: endLeft, right: `calc(100% - ${startLeft})` }}
+              onPointerDown={beginSelectDrag}
+              title={t('replay.dragSelection')}
             />
             {/* Poignee de debut : la plus ANCIENNE, donc la plus a DROITE. */}
             <button

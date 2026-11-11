@@ -53,11 +53,19 @@ export function buildMediamtxConfig(settings: MediamtxSettings): string {
     // HLS en boucle locale : StreamControl relaie les requetes.
     'hls: yes',
     `hlsAddress: ${LOOPBACK}:` + settings.hlsPort,
-    'hlsAlwaysRemux: yes',
+    // Remux a la demande : MediaMTX ne produit le HLS que lorsqu'un lecteur le
+    // demande. Avec `hlsAlwaysRemux: yes`, il decoupait et remuxait en continu
+    // CHAQUE flux publie, meme personne ne regardant — une charge processeur et
+    // memoire permanente, multipliee par le nombre de flux. Le HLS reste
+    // disponible a l'identique des qu'une page le demande.
+    'hlsAlwaysRemux: no',
     // lowLatency : le flux est decoupe en parties de 200 ms, ce qui permet au
     // lecteur de rester sous la seconde. La variante mpegts, plus compatible,
     // impose des segments de 1 s et donc au moins deux secondes de retard.
     'hlsVariant: lowLatency',
+    // 7 est le minimum exige par MediaMTX en mode lowLatency (une valeur plus
+    // basse fait refuser la configuration : « hlsSegmentCount must be at least
+    // 7 »). C'est aussi la playlist la plus courte acceptee.
     'hlsSegmentCount: 7',
     // On laisse MediaMTX choisir la duree de segment : elle doit s'aligner sur
     // l'intervalle entre images cles de la source. Imposer une valeur fixe
@@ -65,12 +73,15 @@ export function buildMediamtxConfig(settings: MediamtxSettings): string {
     // 200ms to 1.602s ») et un decoupage instable des qu'une camera publiait
     // avec des images cles espacees.
     'hlsPartDuration: 200ms',
-    'hlsAllowOrigins: ["*"]',
+    // Pas de ligne `hlsAllowOrigin` : la valeur par defaut est deja « * »
+    // (toutes origines). Le nom du champ a change selon les versions (singulier
+    // puis pluriel) : sur une version ou l'autre nom est inconnu, MediaMTX
+    // refuse TOUT le fichier (« json: unknown field ... ») et ne demarre pas.
+    // S'en remettre au defaut evite cette dependance de version.
     '',
     // WebRTC en boucle locale : la page de lecture y accede par notre serveur.
     'webrtc: yes',
     `webrtcAddress: ${LOOPBACK}:` + settings.webrtcPort,
-    'webrtcAllowOrigins: ["*"]',
     'webrtcLocalUDPAddress: :8189',
     'webrtcIPsFromInterfaces: yes',
     // Le navigateur qui lit le flux est sur la meme machine : sans candidat

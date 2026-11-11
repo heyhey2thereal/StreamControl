@@ -35,6 +35,7 @@ export const CHANNELS = {
   obsCreateScene: 'obs:create-scene',
   obsConfigureScene: 'obs:configure-scene',
   obsSceneStreams: 'obs:scene-streams',
+  obsDeleteScene: 'obs:delete-scene',
 
   obsConnect: 'obs:connect',
   obsDisconnect: 'obs:disconnect',

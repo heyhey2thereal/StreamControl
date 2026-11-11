@@ -272,6 +272,9 @@ export class CaptureManager extends EventEmitter {
         try {
           const handle = await fs.open(segment, 'r');
           try {
+            // Le parseur de boites MP4 a besoin du segment depuis son debut
+            // (les tailles de boites sont en tete de chacune) : on lit donc le
+            // fichier entier, et `from` dit ce qui a deja ete ecrit.
             data = Buffer.alloc(size);
             await handle.read(data, 0, size, 0);
           } finally {

@@ -307,6 +307,9 @@ export function registerIpcHandlers(context: IpcContext): void {
   handle<{ ok: boolean; message: string }>(CHANNELS.obsCreateScene, (name: string) =>
     obs.createScene(String(name ?? '')),
   );
+  handle<{ ok: boolean; message: string }>(CHANNELS.obsDeleteScene, (name: string) =>
+    obs.deleteScene(String(name ?? '')),
+  );
   handle<{ ok: boolean; message: string }>(
     CHANNELS.obsConfigureScene,
     (sceneName: string, selections: Array<{ id: string; enabled?: boolean }>) => {

@@ -216,23 +216,25 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   .replay-playhead { position:absolute; top:-4px; bottom:-4px; width:2px; margin-left:-1px;
                      background:var(--err); box-shadow:0 0 6px var(--err); pointer-events:none; }
   .replay-bar-select { position:absolute; top:0; bottom:0;
-                       background:rgba(78,168,222,.25);
+                       background:rgba(78,168,222,.25); cursor:grab;
                        border-top:2px solid var(--accent); border-bottom:2px solid var(--accent); }
+  .replay-bar-select:active { cursor:grabbing; }
   .replay-handle { position:absolute; top:-6px; bottom:-6px; width:16px; margin-left:-8px;
                    padding:0; border-radius:6px; border:2px solid var(--accent);
                    background:var(--accent); cursor:ew-resize; }
   .replay-handle-label { position:absolute; top:-20px; left:50%; transform:translateX(-50%);
                          font-size:10.5px; font-weight:700; color:var(--accent); white-space:nowrap;
                          background:#14171b; padding:1px 5px; border-radius:4px; }
-  /* Pellicule : une vignette par seconde, ancree a gauche (le direct). */
-  .replay-filmstrip { position:relative; margin-right:auto; height:48px; overflow:hidden;
+  /* Pellicule : une vignette toutes les 5 secondes, ancree a gauche (le direct).
+     Le debordement n'est PAS masque : l'apercu agrandi s'affiche au-dessus. */
+  .replay-filmstrip { position:relative; margin-right:auto; height:48px;
                       border-radius:6px 6px 0 0; margin-bottom:4px; background:#0f1216; }
   .replay-filmstrip canvas { display:block; height:48px; width:100%; cursor:crosshair; }
   .replay-thumb-pop { position:absolute; bottom:100%; transform:translateX(-50%); margin-bottom:6px;
                       padding:4px; border-radius:8px; background:#14171b; border:1px solid #2c3037;
                       box-shadow:0 8px 24px rgba(0,0,0,.5); pointer-events:none; z-index:6; display:none; }
   .replay-thumb-pop.show { display:block; }
-  .replay-thumb-pop-image { display:block; width:200px; height:112px; border-radius:5px; background:#000; }
+  .replay-thumb-pop-image { display:block; width:300px; height:169px; border-radius:5px; background:#000; }
   .replay-thumb-pop-time { margin-top:3px; text-align:center; font-size:11px; font-weight:600; color:var(--accent); }
   /* Apercu de la selection. */
   .replay-preview { margin-top:12px; }
@@ -791,6 +793,8 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   var replayStart = 0;     // secondes en arriere (debut)
   var replayEnd = 0;       // secondes en arriere (fin)
   var replayDrag = null;
+  /** Ecart entre le curseur et la poignee de debut, pour deplacer la selection. */
+  var replaySelectOffset = 0;
 
   // Le direct (0 s) est a GAUCHE, le plus ancien a DROITE : le progress part
   // du direct et avance vers la droite a mesure que le temps passe.
@@ -839,14 +843,16 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     else video.addEventListener('loadedmetadata', apply, { once: true });
   }
 
-  var replayThumbW = 120, replayThumbH = 48, replayThumbCount = 1;
+  var replayThumbW = 240, replayThumbH = 135, replayThumbCount = 1;
+  /** Une vignette toutes les 5 secondes, comme sur le poste. */
+  var replayThumbSeconds = 5;
 
-  /** Dessine une vignette par seconde sur la pellicule, du plus ancien au direct. */
+  /** Dessine une vignette toutes les 5 s sur la pellicule, du direct au plus ancien. */
   function renderReplayFilmstrip() {
     var canvas = document.getElementById('replay-filmstrip-canvas');
     var box = document.getElementById('replay-filmstrip');
     if (!canvas || !box || !replayClip || replayMemory < 1) return;
-    var count = Math.max(1, Math.min(Math.floor(replayMemory), 120));
+    var count = Math.max(1, Math.min(Math.ceil(replayMemory / replayThumbSeconds), 120));
     replayThumbCount = count;
     canvas.width = count * replayThumbW;
     canvas.height = replayThumbH;
@@ -864,7 +870,8 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       ctx.drawImage(video, column * replayThumbW, 0, replayThumbW, replayThumbH);
       index += 1;
       if (index >= count) return;
-      video.currentTime = Math.min(index, Math.max(0, video.duration - 0.05));
+      var at = Math.min(index * replayThumbSeconds, Math.max(0, (video.duration || count * replayThumbSeconds) - 0.05));
+      try { video.currentTime = at; } catch (e) {}
     };
     video.addEventListener('seeked', capture);
     video.addEventListener('loadedmetadata', function () { try { video.currentTime = 0; } catch (e) {} });
@@ -882,12 +889,13 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     var rect = canvas.getBoundingClientRect();
     var ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
     var index = Math.min(replayThumbCount - 1, Math.floor(ratio * replayThumbCount));
-    img.width = 200;
-    img.height = 112;
+    img.width = 300;
+    img.height = 169;
     var ctx = img.getContext('2d');
-    ctx.drawImage(canvas, index * replayThumbW, 0, replayThumbW, replayThumbH, 0, 0, 200, 112);
-    // La colonne 0 (a gauche) est le direct : « en arriere » = l'index lui-meme.
-    label.textContent = L.replayThumbAgo.replace('{seconds}', String(Math.max(0, Math.round(index))));
+    ctx.drawImage(canvas, index * replayThumbW, 0, replayThumbW, replayThumbH, 0, 0, 300, 169);
+    // La colonne 0 (a gauche) est le direct : l'instant est l'index fois 5 s.
+    var ago = Math.round(index * (replayMemory / replayThumbCount));
+    label.textContent = L.replayThumbAgo.replace('{seconds}', String(Math.max(0, ago)));
     pop.style.left = ((index + 0.5) / replayThumbCount) * 100 + '%';
     pop.classList.add('show');
   }
@@ -992,8 +1000,14 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   document.getElementById('replay-handle-end').addEventListener('pointerdown', function (e) {
     replayDrag = 'end'; e.preventDefault();
   });
+  document.getElementById('replay-select').addEventListener('pointerdown', function (e) {
+    // Saisir la selection pour la deplacer entiere, sans changer sa duree.
+    replaySelectOffset = replayStart - replaySecondsFromClientX(e.clientX);
+    replayDrag = 'select'; e.preventDefault();
+  });
   document.getElementById('replay-bar').addEventListener('pointerdown', function (e) {
     if (e.target.classList.contains('replay-handle')) return;
+    if (e.target.classList.contains('replay-bar-select')) return;
     var value = replaySecondsFromClientX(e.clientX);
     // Un clic sur la barre deplace la poignee la plus proche.
     if (Math.abs(value - replayStart) <= Math.abs(value - replayEnd)) replayStart = Math.max(replayEnd, value);
@@ -1004,7 +1018,14 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     if (!replayDrag) return;
     var value = replaySecondsFromClientX(e.clientX);
     if (replayDrag === 'start') replayStart = Math.max(replayEnd, Math.min(replayMemory, value));
-    else replayEnd = Math.max(0, Math.min(replayStart, value));
+    else if (replayDrag === 'end') replayEnd = Math.max(0, Math.min(replayStart, value));
+    else {
+      // Deplacement de TOUTE la selection : on conserve sa largeur.
+      var width = replayStart - replayEnd;
+      var nextStart = Math.max(width, Math.min(replayMemory, value + replaySelectOffset));
+      replayStart = nextStart;
+      replayEnd = nextStart - width;
+    }
     renderReplayBar();
   });
   window.addEventListener('pointerup', function () { replayDrag = null; });

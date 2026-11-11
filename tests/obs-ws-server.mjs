@@ -166,6 +166,17 @@ export function startObsServer({ password = '', port = 0 } = {}) {
             };
             reply({});
             break;
+          case 'RemoveInput':
+            // OBS refuse de supprimer une source encore utilisee par une scene.
+            if (Object.values(state.sceneItems).includes(msg.d.requestData.inputName) ||
+                Object.keys(state.sceneItems).includes(msg.d.requestData.inputName)) {
+              reply({}, false, 604, 'The source is in use by a scene.');
+              break;
+            }
+            if (!state.inputs[msg.d.requestData.inputName]) { reply({}, false, 600); break; }
+            delete state.inputs[msg.d.requestData.inputName];
+            reply({});
+            break;
           case 'GetSceneItemId':
             // OBS refuse si l'element n'est pas dans la scene (code 600).
             if (!state.sceneItems[msg.d.requestData.sourceName]) {

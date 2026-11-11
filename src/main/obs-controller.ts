@@ -699,6 +699,11 @@ export class ObsController extends EventEmitter {
         });
       }
 
+      // Les sources devenues inutiles (scene reconfiguree, flux supprime) sont
+      // retirees de la liste globale d'OBS : sans cela, elles s'accumulaient
+      // jusqu'a saturer le panneau des sources.
+      await this.pruneUnusedSources();
+
       this.logger.info(
         'obs',
         `Scene « ${sceneName} » configuree : ${kept.length} flux (${width}x${height}).`,
@@ -757,7 +762,15 @@ export class ObsController extends EventEmitter {
     }
   }
 
-  /** Retire de la scene nos sources qui ne servent plus. */
+  /**
+   * Retire de la scene nos sources qui ne servent plus.
+   *
+   * `RemoveSceneItem` retire la source de LA SCENE, mais l'entree reste dans la
+   * liste globale d'OBS : reconfiguree plusieurs fois, une meme adresse laissait
+   * donc derriere elle des sources fantomes (« deux mille sources web » dans le
+   * panneau d'OBS). On supprime donc aussi l'entree globale (`RemoveInput`)
+   * quand plus aucune scene ne l'utilise.
+   */
   private async removeStaleSources(sceneName: string, wanted: Set<string>): Promise<void> {
     try {
       const items = await this.client.request<{
@@ -768,15 +781,44 @@ export class ObsController extends EventEmitter {
         const sourceName = item.sourceName ?? '';
         if (!sourceName.startsWith(ObsController.SOURCE_PREFIX)) continue;
         if (wanted.has(sourceName)) continue;
-        if (typeof item.sceneItemId !== 'number') continue;
-        await this.client.request('RemoveSceneItem', {
-          sceneName,
-          sceneItemId: item.sceneItemId,
-        });
+        if (typeof item.sceneItemId === 'number') {
+          await this.client.request('RemoveSceneItem', {
+            sceneName,
+            sceneItemId: item.sceneItemId,
+          });
+        }
+        // L'entree globale n'a plus d'usage une fois retiree de la scene : on la
+        // supprime pour ne pas accumuler de sources fantomes. Un echec n'est pas
+        // bloquant (la source peut encore servir ailleurs).
+        await this.removeInputIfUnused(sourceName);
       }
     } catch {
       // La liste peut etre indisponible : on continue, quitte a laisser une
       // source en trop plutot que d'echouer.
+    }
+  }
+
+  /**
+   * Supprime une source globale d'OBS si aucune scene ne l'affiche.
+   *
+   * OBS refuse `RemoveInput` quand la source est encore utilisee : on verifie
+   * donc d'abord les scenes, puis on retire l'entree. Un echec est ignore.
+   */
+  private async removeInputIfUnused(inputName: string): Promise<void> {
+    try {
+      const scenes = await this.client.request<{ scenes?: Array<{ sceneName?: string }> }>('GetSceneList');
+      for (const scene of scenes.scenes ?? []) {
+        const sceneName = scene.sceneName;
+        if (!sceneName) continue;
+        const items = await this.client.request<{ sceneItems?: Array<{ sourceName?: string }> }>(
+          'GetSceneItemList',
+          { sceneName },
+        );
+        if ((items.sceneItems ?? []).some((item) => item.sourceName === inputName)) return;
+      }
+      await this.client.request('RemoveInput', { inputName });
+    } catch {
+      // Source deja absente, ou OBS la refuse : ce n'est pas bloquant.
     }
   }
 
@@ -837,6 +879,98 @@ export class ObsController extends EventEmitter {
   async removeScene(sceneName: string): Promise<void> {
     await this.client.request('RemoveScene', { sceneName });
     await this.refresh();
+  }
+
+  /**
+   * Supprime une scene depuis l'interface, avec un message lisible.
+   *
+   * La scene disparait d'OBS ; ses sources navigateur sont supprimees de la
+   * liste globale si plus aucune scene ne les utilise, pour ne pas laisser de
+   * sources fantomes.
+   */
+  async deleteScene(sceneName: string): Promise<{ ok: boolean; message: string }> {
+    const name = sceneName.trim();
+    if (!name) return { ok: false, message: 'Choisissez une scene.' };
+    if (this.client.getState() !== 'connected') {
+      return { ok: false, message: 'Connectez-vous a OBS.' };
+    }
+    try {
+      // On note nos sources de la scene avant de la supprimer, pour les retirer
+      // ensuite de la liste globale si elles ne servent nulle part ailleurs.
+      const items = await this.client.request<{ sceneItems?: Array<{ sourceName?: string }> }>(
+        'GetSceneItemList',
+        { sceneName: name },
+      );
+      const ours = (items.sceneItems ?? [])
+        .map((item) => item.sourceName ?? '')
+        .filter((source) => source.startsWith(ObsController.SOURCE_PREFIX));
+
+      await this.client.request('RemoveScene', { sceneName: name });
+      for (const source of ours) await this.removeInputIfUnused(source);
+
+      this.logger.info('obs', `Scene « ${name} » supprimee.`);
+      await this.refresh();
+      return { ok: true, message: `Scene « ${name} » supprimee.` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.errorFrom('obs', error, `Suppression de la scene « ${name} » impossible`);
+      return { ok: false, message };
+    }
+  }
+
+  /**
+   * Supprime les sources navigateur de StreamControl qu'aucune scene n'affiche.
+   *
+   * Repare les installations ou des sources fantomes se sont accumulees : un
+   * flux supprime, ou une scene reconfiguree, laissait sinon son entree dans la
+   * liste globale d'OBS. Appelee apres chaque configuration de scene.
+   *
+   * @returns le nombre de sources supprimees.
+   */
+  async pruneUnusedSources(): Promise<number> {
+    if (this.client.getState() !== 'connected') return 0;
+    try {
+      const list = await this.client.request<{ inputs?: Array<{ inputName?: string; inputKind?: string }> }>(
+        'GetInputList',
+      );
+      const ours = (list.inputs ?? [])
+        .filter(
+          (input) =>
+            typeof input.inputName === 'string' &&
+            input.inputName.startsWith(ObsController.SOURCE_PREFIX) &&
+            input.inputKind === 'browser_source',
+        )
+        .map((input) => input.inputName as string);
+
+      // Ensemble des sources utilisees par au moins une scene.
+      const used = new Set<string>();
+      const scenes = await this.client.request<{ scenes?: Array<{ sceneName?: string }> }>('GetSceneList');
+      for (const scene of scenes.scenes ?? []) {
+        if (!scene.sceneName) continue;
+        const items = await this.client.request<{ sceneItems?: Array<{ sourceName?: string }> }>(
+          'GetSceneItemList',
+          { sceneName: scene.sceneName },
+        );
+        for (const item of items.sceneItems ?? []) {
+          if (item.sourceName) used.add(item.sourceName);
+        }
+      }
+
+      let removed = 0;
+      for (const name of ours) {
+        if (used.has(name)) continue;
+        try {
+          await this.client.request('RemoveInput', { inputName: name });
+          removed += 1;
+        } catch {
+          // Source deja absente : on continue.
+        }
+      }
+      if (removed > 0) this.logger.info('obs', `${removed} source(s) navigateur inutilisee(s) supprimee(s).`);
+      return removed;
+    } catch {
+      return 0;
+    }
   }
 
   /** Renomme une scene OBS. */

@@ -162,7 +162,7 @@ export const MACRO_VARIABLES: MacroVariable[] = [
     perStream: true,
     boolean: true,
   },
-  { token: 'flux_dossier_enregistrement', group: 'flux', sample: 'C:\\StreamControl\\recordings\\cam1', scopes: ['stream', 'alert'], perStream: true },
+  { token: 'flux_dossier_enregistrement', group: 'flux', sample: 'C:\\StreamControl\\records\\cam1', scopes: ['stream', 'alert'], perStream: true },
   { token: 'flux_url_rtmp', group: 'flux', sample: 'rtmp://192.168.1.20:1935/studio/cam1', scopes: ['stream', 'alert'], perStream: true },
   { token: 'flux_url_srt', group: 'flux', sample: 'srt://192.168.1.20:8890?streamid=publish:studio/cam1', scopes: ['stream', 'alert'], perStream: true },
   { token: 'flux_url_rtsp', group: 'flux', sample: 'rtsp://192.168.1.20:8554/studio/cam1', scopes: ['stream', 'alert'], perStream: true },
@@ -223,7 +223,7 @@ export const MACRO_VARIABLES: MacroVariable[] = [
   { token: 'poste_verrouille', group: 'poste', sample: 'False', boolean: true },
   { token: 'poste_dossier_profil', group: 'poste', sample: 'C:\\Users\\regie\\AppData\\Roaming\\StreamControl' },
   { token: 'poste_dossier_rangement', group: 'poste', sample: 'C:\\StreamControl' },
-  { token: 'poste_dossier_enregistrements', group: 'poste', sample: 'C:\\StreamControl\\recordings' },
+  { token: 'poste_dossier_enregistrements', group: 'poste', sample: 'C:\\StreamControl\\records' },
   { token: 'poste_dossier_replay', group: 'poste', sample: 'C:\\StreamControl\\replay' },
 
   // --- Le temps -------------------------------------------------------------

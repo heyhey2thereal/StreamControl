@@ -99,6 +99,8 @@ const api: StreamControlApi = {
     }>,
   obsSceneStreams: (sceneName) =>
     ipcRenderer.invoke(CHANNELS.obsSceneStreams, sceneName) as Promise<string[]>,
+  obsDeleteScene: (name) =>
+    ipcRenderer.invoke(CHANNELS.obsDeleteScene, name) as Promise<{ ok: boolean; message: string }>,
 
   lockState: () => ipcRenderer.invoke(CHANNELS.lockState) as Promise<LockState>,
   lockSetPassword: (password, hint) =>

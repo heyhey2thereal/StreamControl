@@ -2,23 +2,31 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from '../hooks/useTranslation';
 
 /** Largeur d'une vignette dans le canevas (haute definition pour le survol). */
-const THUMB_WIDTH = 160;
-const THUMB_HEIGHT = 90;
+const THUMB_WIDTH = 240;
+const THUMB_HEIGHT = 135;
 /** Taille de l'apercu agrandi, au survol. */
-const POP_WIDTH = 320;
-const POP_HEIGHT = 180;
+const POP_WIDTH = 480;
+const POP_HEIGHT = 270;
+/**
+ * Duree representee par une vignette, en secondes.
+ *
+ * Cinq secondes : des vignettes plus grandes et plus lisibles qu'une image par
+ * seconde, et beaucoup moins de travail au dessin (une capture toutes les 5 s
+ * au lieu d'une par seconde). La pellicule reste alignee sur la barre.
+ */
+const THUMB_SECONDS = 5;
 
 /**
- * Pellicule de la timeline : une vignette par seconde, comme dans un logiciel
- * de montage video.
+ * Pellicule de la timeline : une vignette toutes les 5 secondes, comme dans un
+ * logiciel de montage video.
  *
  * On lit le **clip du tampon** (fichier fige, designe par un jeton) dans un
- * element video hors ecran, et on dessine une image par seconde sur un canevas.
- * L'ordre suit celui de la barre : la vignette la plus a gauche est la plus
- * ancienne, la plus a droite le direct.
+ * element video hors ecran, et on dessine une image toutes les 5 s sur un
+ * canevas. L'ordre suit celui de la barre : la vignette la plus a gauche est la
+ * plus recente (le direct), la plus a droite la plus ancienne.
  *
  * Au **survol**, la vignette visee est agrandie au-dessus de la pellicule, avec
- * l'instant qu'elle represente (« il y a N s »), comme dans un montage video.
+ * l'instant qu'elle represente (« il y a N s »).
  */
 export function ReplayFilmstrip({
   src,
@@ -37,7 +45,9 @@ export function ReplayFilmstrip({
   const popRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<number | null>(null);
 
-  const count = Math.max(1, Math.min(Math.floor(seconds), 120));
+  // Une vignette toutes les 5 s. `count` reste borne pour ne pas dessiner des
+  // centaines d'images sur une tres longue memoire.
+  const count = Math.max(1, Math.min(Math.ceil(seconds / THUMB_SECONDS), 120));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -70,7 +80,17 @@ export function ReplayFilmstrip({
       context.drawImage(video, column * THUMB_WIDTH, 0, THUMB_WIDTH, THUMB_HEIGHT);
       index += 1;
       if (index >= count) return;
-      video.currentTime = Math.min(index, Math.max(0, (video.duration || count) - 0.05));
+      // Instant represente par la vignette suivante, en secondes depuis le
+      // debut du clip.
+      const at = Math.min(
+        index * THUMB_SECONDS,
+        Math.max(0, (video.duration || count * THUMB_SECONDS) - 0.05),
+      );
+      try {
+        video.currentTime = at;
+      } catch {
+        // Ignore : on retente au prochain evenement.
+      }
     };
 
     video.addEventListener('loadedmetadata', () => {
@@ -127,7 +147,7 @@ export function ReplayFilmstrip({
   // La colonne `hover` est celle du survol, dans l'ordre affiche : la colonne 0
   // (a gauche) est le direct (0 s en arriere), la derniere (a droite) est la
   // plus ancienne.
-  const hoverSecondsAgo = hover === null ? null : Math.max(0, Math.round(hover));
+  const hoverSecondsAgo = hover === null ? null : Math.round(hover * (seconds / count));
 
   const onMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();

@@ -3,6 +3,39 @@
 Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 (le tag `v2.0.2` pointe dessus).
 
+## 0. Deuxieme passe de correctifs (cette session)
+- **Compatibilite MediaMTX.** Le drapeau de validation `--validate-conf`
+  n'existe pas dans la version livree (elle utilise `--validate-conf=chemin`) :
+  l'appel avec un espace faisait echouer TOUS les demarrages. La validation se
+  fait desormais en observant le demarrage reel, et le message d'erreur cite la
+  sortie de MediaMTX. Le champ `hlsAllowOrigins` (dont le nom a change selon les
+  versions) est retire : sa valeur par defaut suffit, et un nom inconnu faisait
+  refuser toute la configuration. `online` et `ready` sont tous deux acceptes
+  (l'API a renomme le champ).
+- **OBS : « Appliquer et diffuser » ne lance plus rien.** Le bouton configure la
+  scene et la met au **programme**, sans demarrer la diffusion ni
+  l'enregistrement.
+- **OBS : suppression des scenes depuis StreamControl**, avec confirmation.
+- **OBS : plus d'accumulation de sources.** Reconfigurer une scene laissait la
+  source precedente dans la liste globale d'OBS (« deux mille sources web ») :
+  les sources inutilisees sont desormais supprimees (`RemoveInput`).
+- **Replay : plus de rafraichissement aleatoire.** Le clip du tampon n'est plus
+  remplace toutes les 20 s (ce qui relancait la lecture au milieu de l'extrait) ;
+  un bouton **Actualiser** le recharge a la demande.
+- **Replay : deplacer toute la selection.** On peut saisir la selection et la
+  faire glisser a gauche ou a droite, sans changer sa duree (poste et panneau
+  distant).
+- **Pellicule : une vignette toutes les 5 s**, plus grandes, et l'apercu agrandi
+  au survol ne sont plus coupes par le cadre.
+- **Statut des flux : plus de faux « ne recoit rien ».** Un hoquet de l'API
+  MediaMTX ne fait plus passer tous les flux hors ligne un instant.
+- **Enregistrements dans `records`** (au lieu de `recordings`), un sous-dossier
+  par adresse de flux. Les tampons de replay des flux supprimes sont nettoyes.
+- **Moins de memoire et de disque.** L'assemblage fMP4 ecrit au fur et a mesure
+  au lieu de charger tous les segments ; le HLS n'est plus remuxe en continu
+  (`hlsAlwaysRemux: no`) ; le journal par defaut passe a 500 lignes.
+- Chiffres : **48 unitaires · 525 e2e · 0 echec.**
+
 ## 1. Refonte complete du replay
 - **Nouvelle categorie « Replay »** dans la barre laterale, a part entiere.
 - **Barre de lecture intuitive** : une barre montre la memoire disponible (les

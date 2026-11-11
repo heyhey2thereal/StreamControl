@@ -2697,6 +2697,7 @@ kbd {
   text-align: left;
   box-shadow: var(--shadow-1);
   transition: border-color 0.14s, background 0.14s;
+  cursor: pointer;
 }
 
 .scene-card:hover {
@@ -2719,6 +2720,35 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+/* Bouton de suppression d'une scene : discret, il n'apparait qu'au survol. */
+.scene-card-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s, color 0.14s, border-color 0.14s;
+}
+
+.scene-card:hover .scene-card-delete,
+.scene-card:focus-within .scene-card-delete {
+  opacity: 1;
+}
+
+.scene-card-delete:hover {
+  color: var(--rec);
+  border-color: var(--rec);
 }
 
 .scene-card.new {
@@ -2729,6 +2759,7 @@ kbd {
   border-style: dashed;
   background: transparent;
   box-shadow: none;
+  cursor: default;
 }
 
 /* --- Editeur de scene --------------------------------------------------- */
@@ -3374,6 +3405,11 @@ input[type='range'].input {
   background: var(--accent-soft, rgba(78, 168, 222, 0.25));
   border-top: 2px solid var(--accent);
   border-bottom: 2px solid var(--accent);
+  /* La selection entiere se saisit pour etre deplacee. */
+  cursor: grab;
+}
+.replay-bar-select:active {
+  cursor: grabbing;
 }
 
 .replay-handle {
@@ -3416,13 +3452,13 @@ input[type='range'].input {
   pointer-events: none;
 }
 
-/* Pellicule : une vignette par seconde, alignee sur la barre (le direct a
-   gauche, le plus ancien a droite). Elle est ancree a gauche. */
+/* Pellicule : une vignette toutes les 5 secondes, alignee sur la barre (le
+   direct a gauche, le plus ancien a droite). Le debordement n'est pas masque
+   ici : l'apercu agrandi doit pouvoir s'afficher AU-DESSUS de la pellicule. */
 .replay-filmstrip {
   position: relative;
   margin-right: auto;
   height: 54px;
-  overflow: hidden;
   border-radius: 6px 6px 0 0;
   margin-bottom: 4px;
   background: var(--bg-0);
@@ -3431,6 +3467,7 @@ input[type='range'].input {
   display: block;
   height: 54px;
   width: 100%;
+  border-radius: 6px 6px 0 0;
   cursor: crosshair;
 }
 
@@ -3450,8 +3487,8 @@ input[type='range'].input {
 }
 .replay-thumb-pop-image {
   display: block;
-  width: 240px;
-  height: 135px;
+  width: 320px;
+  height: 180px;
   border-radius: 5px;
   background: #000;
 }

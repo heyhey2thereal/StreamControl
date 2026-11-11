@@ -11,6 +11,7 @@
  */
 import { BrowserWindow, session } from 'electron';
 import { EventEmitter } from 'node:events';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
   EndpointUrls,
@@ -25,7 +26,7 @@ import type {
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
 import { buildPathOptions, resolveRecordingDir } from './recording';
-import { replayPathOptions, saveReplay, buildReplay, buildBufferClip, replayState, clearReplayBuffer, type SaveReplayOptions, type ReplayBuild, type ReplayClip } from './replay';
+import { replayPathOptions, saveReplay, buildReplay, buildBufferClip, replayState, clearReplayBuffer, replayBufferDir, type SaveReplayOptions, type ReplayBuild, type ReplayClip } from './replay';
 import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
@@ -172,7 +173,44 @@ export class StreamController extends EventEmitter {
       this.logger.info('streams', 'Adresse par defaut "live" creee.');
     }
 
+    // Les tampons de replay des flux supprimes restaient sur le disque et
+    // gonflaient le stockage. On les efface au demarrage, quand on connait la
+    // liste reelle des adresses.
+    void this.pruneOrphanReplayBuffers();
+
     this.startPolling();
+  }
+
+  /**
+   * Supprime les dossiers de tampon des flux qui n'existent plus.
+   *
+   * Un flux supprime, ou renomme, laissait son dossier de segments : ils
+   * s'accumulaient sur le disque sans jamais servir.
+   */
+  private async pruneOrphanReplayBuffers(): Promise<void> {
+    try {
+      const settings = this.settings.get();
+      const root = replayBufferDir(settings.replay.path);
+      const known = new Set(this.registry.list().map((endpoint) => endpoint.path));
+      const entries = await fs.readdir(root, { withFileTypes: true });
+      let removed = 0;
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        // Un chemin de flux peut contenir une barre oblique (`studio/cam1`) :
+        // MediaMTX cree alors des dossiers imbriques. On conserve donc un
+        // dossier s'il EST une adresse connue, ou s'il est le PARENT d'une
+        // adresse connue (sinon on supprimerait le dossier `studio`).
+        const isKnown =
+          known.has(entry.name) ||
+          [...known].some((streamPath) => streamPath.startsWith(`${entry.name}/`));
+        if (isKnown) continue;
+        await fs.rm(path.join(root, entry.name), { recursive: true, force: true });
+        removed += 1;
+      }
+      if (removed > 0) this.logger.info('replay', `${removed} tampon(s) de flux supprime(s) nettoye(s).`);
+    } catch {
+      // Dossier absent, ou illisible : sans consequence au demarrage.
+    }
   }
 
   /** Interroge l'API MediaMTX regulierement pour connaitre l'etat reel. */
@@ -192,7 +230,31 @@ export class StreamController extends EventEmitter {
    * aucune image apparaitre, sans comprendre pourquoi.
    */
   async refreshLiveStatus(): Promise<void> {
-    const paths: MediamtxPathState[] = await this.mediamtx.fetchPaths();
+    const paths = await this.mediamtx.fetchPaths();
+
+    // `null` signifie « on n'a pas pu lire l'API », et non « aucun flux ».
+    // Confondre les deux faisait passer tous les flux hors ligne un instant a
+    // chaque hoquet de l'API, puis revenir : l'interface annoncait alors que
+    // deux flux ne recevaient rien, avant de se corriger. On ne conclut donc
+    // rien quand MediaMTX tourne encore.
+    if (paths === null) {
+      if (this.mediamtx.isRunning) return;
+      // MediaMTX est vraiment arrete : aucun flux ne peut publier.
+      for (const endpoint of this.registry.list()) {
+        this.registry.applyLiveState(endpoint.id, {
+          online: false,
+          bytesReceived: 0,
+          hasAudio: false,
+          viewers: 0,
+          recording: false,
+          recordingPath: undefined,
+        });
+      }
+      this.reportConnections([]);
+      this.emit('streams-refresh');
+      return;
+    }
+
     const byName = new Map(paths.map((entry) => [entry.name, entry]));
 
     for (const endpoint of this.registry.list()) {
@@ -390,12 +452,26 @@ export class StreamController extends EventEmitter {
 
     this.closeViewerWindow(id);
     this.registry.remove(id);
+    // Le tampon de replay du flux n'a plus d'usage : on le supprime, sinon les
+    // segments s'accumulaient sur le disque pour une adresse disparue.
+    void this.removeReplayBufferFor(endpoint.path);
     // Le chemin disparait de MediaMTX au prochain redemarrage : le laisser en
     // place n'empeche pas un flux fantome de publier, mais l'enregistrement
     // s'arrete de lui-meme puisqu'on ne le reconfigure plus.
     void this.syncPaths();
     this.logger.info('streams', `Adresse "${endpoint.name}" supprimee.`);
     return { ok: true };
+  }
+
+  /** Supprime le dossier de tampon d'un flux supprime. */
+  private async removeReplayBufferFor(streamPath: string): Promise<void> {
+    try {
+      const settings = this.settings.get();
+      const directory = path.join(replayBufferDir(settings.replay.path), streamPath);
+      await fs.rm(directory, { recursive: true, force: true });
+    } catch {
+      // Dossier deja absent, ou verrouille par MediaMTX : sans consequence.
+    }
   }
 
   /**

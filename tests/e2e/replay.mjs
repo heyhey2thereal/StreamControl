@@ -112,10 +112,19 @@ try {
   }, 20000);
   check('le tampon se remplit', gotSegments);
 
+  // On attend que le tampon contienne de quoi faire un replay (minimum 5 s dans
+  // ce test). Lire juste a l'apparition du premier segment donnerait 0 s : le
+  // segment en cours d'ecriture est ecarte, et la duree n'est lue que sur les
+  // segments clos.
+  await waitFor('le tampon atteint le minimum', async () => {
+    const seconds = await cdp.evaluate(
+      `window.streamcontrol.replayAvailable(${JSON.stringify(target.id)}).then((r) => r.seconds)`,
+    );
+    return seconds >= 6;
+  }, 25000);
+
   const available = await cdp.evaluate(`window.streamcontrol.replayAvailable(${JSON.stringify(target.id)})`);
   check('duree de replay annoncee', available.seconds > 0, `${available.seconds} s`);
-
-  await sleep(6000);
 
   // --- Sauvegarde --------------------------------------------------------
   // On demande une plage sure : la duree disponible, bornee. Demander plus que

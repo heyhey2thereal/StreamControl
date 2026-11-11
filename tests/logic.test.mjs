@@ -1195,6 +1195,65 @@ test('la duree d un enregistrement direct est reparee', () => {
 });
 
 /**
+ * L'assemblage de fichiers fMP4 ecrit au fur et a mesure, sans tout garder en
+ * memoire.
+ *
+ * Le defaut corrige : `concatFragmentedMp4Files` lisait TOUS les segments en
+ * memoire avant de concatener. Un replay de 60 s par flux represente plusieurs
+ * dizaines de Mo ; assembler plusieurs replays en parallele faisait grimper la
+ * memoire de l'application. Le fichier produit doit etre identique.
+ */
+test('l assemblage fMP4 ecrit au fur et a mesure sans tout charger', async () => {
+  const { concatFragmentedMp4, concatFragmentedMp4Files } = require('../dist-electron/main/fmp4.js');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const nodePath = require('node:path');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+  const tfhd = box('tfhd', Buffer.from([2, 0, 0, 0, 0, 0, 0, 1]));
+  const fragment = () => {
+    const trunBody = Buffer.alloc(4 + 4 + 8);
+    trunBody.writeUInt32BE(0x000300, 0);
+    trunBody.writeUInt32BE(1, 4);
+    trunBody.writeUInt32BE(1000, 8);
+    trunBody.writeUInt32BE(100, 12);
+    const traf = box('traf', Buffer.concat([tfhd, box('trun', trunBody)]));
+    return Buffer.concat([
+      box('moof', Buffer.concat([box('mfhd', Buffer.alloc(8)), traf])),
+      box('mdat', Buffer.alloc(32)),
+    ]);
+  };
+  const init = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), box('moov', Buffer.alloc(12, 0))]);
+  const segment = () => Buffer.concat([init, fragment()]);
+
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sc-concat-'));
+  const files = [];
+  for (let index = 0; index < 3; index += 1) {
+    const file = nodePath.join(dir, `seg${index}.mp4`);
+    fs.writeFileSync(file, segment());
+    files.push(file);
+  }
+
+  const target = nodePath.join(dir, 'merged.mp4');
+  const written = await concatFragmentedMp4Files(files, target);
+  assert.ok(written, 'le fichier assemble doit exister');
+
+  const expected = concatFragmentedMp4(files.map((file) => fs.readFileSync(file)));
+  assert.ok(expected, 'la reference en memoire doit produire un fichier');
+  const actual = fs.readFileSync(target);
+  assert.equal(actual.length, expected.length, 'meme taille');
+  assert.ok(actual.equals(expected), 'contenu identique');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
  * La comparaison de versions refuse une version plus ancienne.
  *
  * Le defaut corrige : l'application proposait parfois d'installer une version

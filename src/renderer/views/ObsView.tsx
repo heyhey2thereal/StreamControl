@@ -348,16 +348,34 @@ export function ObsView({ sc }: { sc: StreamControl }) {
           ) : (
             <div className="scene-cards" style={{ marginTop: 10 }}>
               {obs.scenes.map((scene) => (
-                <button
+                <div
                   key={scene.name}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   className={`scene-card${scene.active ? ' live' : ''}${editingScene === scene.name ? ' editing' : ''}`}
                   onClick={() => setEditingScene(scene.name)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') setEditingScene(scene.name);
+                  }}
                 >
                   <span className="scene-card-name">{scene.name}</span>
                   {scene.active ? <span className="badge live">{t('studio.program')}</span> : null}
                   {scene.name === obs.previewScene ? <span className="badge">{t('studio.preview')}</span> : null}
-                </button>
+                  <button
+                    type="button"
+                    className="scene-card-delete"
+                    title={t('scene.deleteHint')}
+                    aria-label={t('scene.delete')}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (window.confirm(t('scene.deleteConfirm', { name: scene.name }))) {
+                        void sc.obsDeleteScene(scene.name);
+                      }
+                    }}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
               ))}
               <div className="scene-card new">
                 <input
@@ -576,8 +594,10 @@ function SceneEditor({
   /**
    * Applique la configuration a la scene.
    *
-   * @param goLive envoie aussi la scene en direct : on configure, on la met au
-   *   programme, et on lance la diffusion si elle ne tourne pas.
+   * @param goLive envoie aussi la scene en programme (ce qui est diffuse) :
+   *   on configure, puis on la met au programme. On ne DEMARRE jamais la
+   *   diffusion ni l'enregistrement : ce sont deux actions distinctes, que
+   *   l'operateur declenche explicitement depuis l'onglet Diffusion.
    */
   const apply = async (goLive: boolean) => {
     setBusy(true);
@@ -587,13 +607,10 @@ function SceneEditor({
       if (!result.ok) return;
 
       if (goLive) {
-        // La scene configuree devient celle qui part en direct. On DEMARRE la
-        // diffusion si besoin, sans jamais la basculer : « mettre en direct »
-        // ne doit pas couper un direct deja en cours.
+        // La scene configuree devient celle qui part en direct. On bascule
+        // UNIQUEMENT le programme : « mettre en direct » ne doit ni couper un
+        // direct en cours, ni en demarrer un.
         await sc.obsSetScene(sceneName);
-        const configured = await window.streamcontrol.obsUseStreamControl();
-        if (!configured.ok) sc.notify('warn', configured.message);
-        await sc.obsStartStreaming();
       }
       onClose();
     } finally {

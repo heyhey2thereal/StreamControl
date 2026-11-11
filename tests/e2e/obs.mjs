@@ -215,7 +215,28 @@ try {
   );
   check('on peut reduire a un seul flux', single.ok === true, single.message);
   const remaining = Object.keys(obsServer.state.inputs).filter((n) => n.startsWith('StreamControl - '));
-  check('la source en trop est retiree de la scene', remaining.length === 2, `sources creees : ${remaining.length}`);
+  check('la source en trop est retiree de la scene et d OBS', remaining.length === 1, `sources restantes : ${remaining.length}`);
+
+  // --- 7b-bis. Les sources ne s'accumulent pas ---------------------------
+  // Le defaut corrige : reconfigurer une scene laissait la source precedente
+  // dans la liste globale d'OBS, qui finissait par en contenir des milliers.
+  console.log('\n--- pas d accumulation de sources ---');
+  for (let index = 0; index < 4; index += 1) {
+    await c.evaluate(
+      `window.streamcontrol.obsConfigureScene('Scene grille', ${JSON.stringify(twoIds.map((id) => ({ id })))})`,
+    );
+  }
+  const afterMany = Object.keys(obsServer.state.inputs).filter((n) => n.startsWith('StreamControl - '));
+  check(
+    'reconfigurer une scene n accumule pas de sources',
+    afterMany.length === 2,
+    `${afterMany.length} source(s) : ${afterMany.join(', ')}`,
+  );
+
+  // Suppression d'une scene depuis l'interface : elle disparait d'OBS.
+  const deleteScene = await c.evaluate(`window.streamcontrol.obsDeleteScene('Scene grille')`);
+  check('une scene peut etre supprimee depuis l interface', deleteScene.ok === true, deleteScene.message);
+  check('elle disparait d OBS', !obsServer.state.scenes.includes('Scene grille'));
 
   // --- 7c. Desactiver un flux : sa cellule devient noire ------------------
   // Le flux reste dans la scene, mais sa source est masquee dans OBS.

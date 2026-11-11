@@ -596,22 +596,50 @@ export function concatFragmentedMp4(segments: Buffer[]): Buffer | null {
 /**
  * Lit des fichiers fMP4 et les assemble en un MP4 unique.
  *
+ * Les segments sont lus **un par un** et ecrits au fur et a mesure : garder
+ * tous les segments en memoire pesait lourd (un replay de 60 s represente
+ * plusieurs dizaines de Mo par flux), alors que l'assemblage n'a besoin que du
+ * segment courant. L'en-tete corrige est reecrit a la fin, a sa position
+ * d'origine, exactement comme le fait la capture en direct.
+ *
  * @returns le chemin du fichier ecrit, ou null si aucun segment n'est lisible.
  */
 export async function concatFragmentedMp4Files(
   segmentPaths: string[],
   target: string,
 ): Promise<string | null> {
-  const buffers: Buffer[] = [];
-  for (const segmentPath of segmentPaths) {
-    try {
-      buffers.push(await fs.readFile(segmentPath));
-    } catch {
-      // Segment disparu (purge du tampon) : on continue avec les autres.
+  const state = createFmp4Writer();
+  const handle = await fs.open(target, 'w');
+  let position = 0;
+  try {
+    for (const segmentPath of segmentPaths) {
+      let data: Buffer;
+      try {
+        data = await fs.readFile(segmentPath);
+      } catch {
+        // Segment disparu (purge du tampon) : on continue avec les autres.
+        continue;
+      }
+      const result = fmp4Append(state, data);
+      if (result && result.chunk.length > 0) {
+        await handle.write(result.chunk, 0, result.chunk.length, position);
+        position += result.chunk.length;
+      }
     }
+
+    if (!state.initWritten || position === 0) {
+      await handle.close();
+      await fs.rm(target, { force: true });
+      return null;
+    }
+
+    // La duree totale n'est connue qu'ici : on corrige l'en-tete, deja ecrit.
+    fmp4Finalize(state);
+    if (state.initMoov) {
+      await handle.write(state.initMoov, 0, state.initMoov.length, state.initOffset);
+    }
+    return target;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
-  const merged = concatFragmentedMp4(buffers);
-  if (!merged) return null;
-  await fs.writeFile(target, merged);
-  return target;
 }
