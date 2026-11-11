@@ -141,7 +141,29 @@ try {
       `${duration} s pour ${elapsed} s enregistrees`,
     );
     check('la duree annoncee n est pas zero', duration > 0, `${duration} s`);
+    // Le fichier doit vivre dans le MEME sous-dossier que l'enregistrement
+    // natif de MediaMTX (`<dossier>/<chemin du flux>/`). Sinon l'operateur
+    // ouvrait le sous-dossier du flux et n'y voyait qu'une ancienne video,
+    // pendant que le nouvel enregistrement etait ailleurs.
+    check(
+      'le fichier est range dans le sous-dossier du flux',
+      path.dirname(file) === path.join(REC_DIR, target.path),
+      path.dirname(file),
+    );
   }
+
+  // --- Un second enregistrement ne doit PAS ecraser le premier -------------
+  // Le nom portait la seconde : deux enregistrements lances dans la meme
+  // seconde ecrivaient le meme fichier, et le second ecrasait le premier.
+  console.log('\n--- second enregistrement ---');
+  const firstFile = files[0];
+  await cdp.evaluate(`window.streamcontrol.streamSetRecording(${JSON.stringify(target.id)}, true)`);
+  await sleep(4000);
+  await cdp.evaluate(`window.streamcontrol.streamSetRecording(${JSON.stringify(target.id)}, false)`);
+  await sleep(1500);
+  const after = mp4Files(REC_DIR);
+  check('le second enregistrement ajoute un fichier', after.length >= 2, `${after.length} fichier(s)`);
+  check('le premier enregistrement est conserve', after.includes(firstFile), after.map((f) => path.basename(f)).join(', '));
 
   cdp.close();
 } catch (error) {

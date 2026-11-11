@@ -234,6 +234,20 @@ try {
     JSON.stringify(enabledStates),
   );
 
+  // --- 7d. Un reglage de l'ecran « pas de flux » recharge les sources -----
+  // Sans cela, l'operateur devait reconfigurer la scene a la main pour voir le
+  // changement : la source navigateur gardait l'ancienne page.
+  console.log('\n--- rechargement automatique des sources ---');
+  const before = obsServer.state.refreshed.length;
+  await c.evaluate(`window.streamcontrol.saveSettings({ scene: { offlineEnabled: true, offlineMode: 'message', offlineText: 'Perdu' } })`);
+  await harnessSleep(1200);
+  const refreshed = obsServer.state.refreshed.slice(before);
+  check(
+    'les sources navigateur sont rechargees apres un reglage',
+    refreshed.length >= 1 && refreshed.every((r) => r.propertyName === 'refreshnocache'),
+    JSON.stringify(refreshed),
+  );
+
   // --- 8. Mode studio : preparer puis diffuser sans toucher a OBS ---------
   console.log('\n--- mode studio ---');
   const studioOn = await c.evaluate('window.streamcontrol.obsSetStudioMode(true)');

@@ -205,6 +205,36 @@ try {
   check('le clip annonce les plages', clip.headers['accept-ranges'] === 'bytes', String(clip.headers['accept-ranges']));
   check('le clip est un MP4', String(clip.headers['content-type']).includes('video/mp4'), String(clip.headers['content-type']));
 
+  // Sens de la timeline : le direct est a GAUCHE, le plus ancien a DROITE.
+  // La tete de lecture (bord du remplissage) doit donc etre pres du bord gauche
+  // tant que la memoire n'est pas pleine.
+  const playheadLeft = await cdp.evaluate(
+    `parseFloat(getComputedStyle(document.querySelector('.replay-playhead')).left)`,
+  );
+  const barWidth = await cdp.evaluate(`document.querySelector('.replay-bar').getBoundingClientRect().width`);
+  check(
+    'le direct (tete de lecture) est a gauche',
+    Number.isFinite(playheadLeft) && playheadLeft < barWidth / 2,
+    `${playheadLeft} px sur ${barWidth} px`,
+  );
+  // La graduation « Direct » doit etre la premiere (a gauche).
+  const axisFirst = await cdp.evaluate(`document.querySelector('.replay-axis span')?.textContent ?? ''`);
+  check('la graduation « Direct » est a gauche', /Direct/i.test(axisFirst), axisFirst);
+
+  // Survol d'une vignette : un apercu agrandi avec l'instant s'affiche.
+  await cdp.evaluate(`(() => {
+    const canvas = document.querySelector('.replay-filmstrip-canvas');
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: rect.left + rect.width * 0.5, bubbles: true }));
+  })()`);
+  await sleep(300);
+  const popText = await cdp.evaluate(`document.querySelector('.replay-thumb-pop-time')?.textContent ?? ''`);
+  check('le survol affiche l instant de la vignette', /il y a [0-9]+ s/.test(popText), popText);
+  check(
+    'un apercu agrandi est dessine au survol',
+    await cdp.evaluate(`(document.querySelector('.replay-thumb-pop-image')?.width ?? 0) > 0`),
+  );
+
   // --- Replay demande depuis un appareil du reseau -----------------------
   //
   // Le panneau distant prepare l'extrait sur le poste, l'appareil le

@@ -31,6 +31,8 @@ export function startObsServer({ password = '', port = 0 } = {}) {
     inputs: {},
     /** Transformations appliquees aux elements de scene. */
     transforms: [],
+    /** Sources navigateur rechargees (bouton « Actualiser »). */
+    refreshed: [],
     /** Sources reellement presentes dans une scene (nom -> scene). */
     sceneItems: {},
     /** Etat active/masque d'un element de scene (« scene/itemId » -> booleen). */
@@ -156,7 +158,12 @@ export function startObsServer({ password = '', port = 0 } = {}) {
             break;
           case 'SetInputSettings':
             if (!state.inputs[msg.d.requestData.inputName]) { reply({}, false, 600); break; }
-            state.inputs[msg.d.requestData.inputName] = { ...msg.d.requestData };
+            // OBS modifie les REGLAGES de la source, il ne change pas son type :
+            // on fusionne, sinon `inputKind` disparaitrait de la liste.
+            state.inputs[msg.d.requestData.inputName] = {
+              ...state.inputs[msg.d.requestData.inputName],
+              ...msg.d.requestData,
+            };
             reply({});
             break;
           case 'GetSceneItemId':
@@ -173,6 +180,14 @@ export function startObsServer({ password = '', port = 0 } = {}) {
             break;
           case 'SetSceneItemTransform':
             state.transforms.push(msg.d.requestData.sceneItemTransform);
+            reply({});
+            break;
+          case 'PressInputPropertiesButton':
+            // Rechargement d'une source navigateur (bouton « Actualiser »).
+            state.refreshed.push({
+              inputName: msg.d.requestData.inputName,
+              propertyName: msg.d.requestData.propertyName,
+            });
             reply({});
             break;
           case 'GetStudioModeEnabled':

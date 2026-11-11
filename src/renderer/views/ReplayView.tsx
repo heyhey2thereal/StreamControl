@@ -31,6 +31,12 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [savedFile, setSavedFile] = useState('');
+  /**
+   * Clip du tampon prepare pour l'apercu et la pellicule : son jeton et sa
+   * duree. Le fichier n'est jamais remplace, donc la lecture tient pendant le
+   * direct.
+   */
+  const [clip, setClip] = useState<{ url: string; seconds: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const dragging = useRef<'start' | 'end' | null>(null);
 
@@ -68,6 +74,39 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
 
   const selected: StreamEndpointView | undefined = streams.find((stream) => stream.id === selectedId);
   const selectedState = selectedId ? states[selectedId] : undefined;
+  // Prepare un clip du tampon pour le flux selectionne.
+  //
+  // Le clip est fige (jeton) : la lecture ne casse donc pas quand le tampon
+  // avance. On en prepare un nouveau quand on change de flux, et de temps en
+  // temps pour suivre le direct — mais sans jamais remplacer celui qui est en
+  // cours de lecture, qui reste servi sur son propre jeton.
+  const clipBase = selected?.urls.replayClip ?? '';
+  useEffect(() => {
+    if (!clipBase || !enabled) {
+      setClip(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const prepare = async () => {
+      try {
+        // La base est `<...>/clip/<flux>` ; `/new` renvoie un clip frais.
+        const response = await fetch(`${clipBase}/new`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const result = (await response.json()) as { ok?: boolean; url?: string; seconds?: number };
+        if (cancelled || result.ok !== true || !result.url) return;
+        setClip({ url: new URL(result.url, clipBase).toString(), seconds: result.seconds ?? 0 });
+      } catch {
+        // Tampon pas encore pret : on retente au prochain cycle.
+      }
+    };
+    void prepare();
+    const timer = setInterval(() => void prepare(), 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [clipBase, enabled]);
+
   // La barre represente la memoire configuree : c'est la duree maximale d'un
   // replay. On borne la duree disponible a cette valeur : un tampon residuel
   // (apres une reinstallation) peut annoncer plus que la memoire, ce qui
@@ -78,33 +117,42 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   // 32 s, et l'extrait etait plus court que voulu.
   const reachable = Math.max(available, minimum);
 
-  // Le direct est a DROITE, le plus ancien a GAUCHE. La memoire s'etend donc
-  // de la droite vers la gauche a mesure que le temps passe : le progress part
-  // du direct et recule vers la gauche, comme sur une barre de temps video.
+  // Le plus ANCIEN est a DROITE, le plus RECENT (le direct) a GAUCHE. La
+  // memoire s'etend donc du direct (a gauche) vers la droite a mesure que le
+  // temps passe.
   const pct = (seconds: number) => `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
+  // Position d'une seconde « en arriere » : 0 s (direct) = tout a GAUCHE,
+  // `memory` s (le plus ancien) = tout a DROITE.
   const agoLeft = (seconds: number) =>
-    `${Math.min(100, Math.max(0, ((memory - seconds) / memory) * 100))}%`;
-  // Position d'une seconde "en arriere" : 0 s = tout a droite (direct).
+    `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
+  // Poignee de debut : la plus ancienne, donc la plus a DROITE.
   const startLeft = agoLeft(startAgo);
+  // Poignee de fin : la plus recente, donc la plus a GAUCHE.
   const endLeft = agoLeft(endAgo);
-  // Remplissage : ancre au direct (a droite), il s'etend vers la gauche. Sa
-  // largeur est la memoire reelle, son bord gauche le moment le plus ancien.
+  // Remplissage : ancre au direct (a gauche), il s'etend vers la droite. Sa
+  // largeur est la memoire reelle.
   const fillWidth = pct(available);
-  // Tete de lecture : elle marque le bord gauche du remplissage, donc elle
-  // avance de la droite vers la gauche.
+  // Tete de lecture : bord droit du remplissage, donc elle avance vers la droite.
   const playheadLeft = agoLeft(available);
 
   // Clip du tampon : video deplacable dans le temps (le direct HLS ne l'est
-  // pas). Il sert a l'apercu et a la pellicule.
-  const clipSrc = selected?.urls.replayClip ?? '';
-  // Position a montrer dans le clip : le clip finit au direct, donc « il y a
-  // startAgo secondes » correspond a `available - startAgo` depuis le debut.
-  const previewSeek = Math.max(0, available - startAgo);
+  // pas). Il sert a l'apercu et a la pellicule. On prefere le clip prepare avec
+  // son jeton (fichier fige) ; a defaut, l'adresse generique.
+  const clipSrc = clip?.url || selected?.urls.replayClip || '';
+  // Le clip finit au direct : « il y a startAgo secondes » correspond a
+  // `clipSeconds - startAgo` depuis le debut du clip.
+  const clipSeconds = clip?.seconds ?? available;
+  const previewFrom = Math.max(0, clipSeconds - startAgo);
+  const previewTo = Math.max(previewFrom, clipSeconds - endAgo);
 
   const wanted = Math.max(0, startAgo - endAgo);
 
-  /** Convertit une position horizontale (0..1) en secondes en arriere. */
-  const secondsFromRatio = (ratio: number) => Math.round((1 - Math.min(1, Math.max(0, ratio))) * memory);
+  /**
+   * Convertit une position horizontale (0..1) en secondes « en arriere ».
+   *
+   * Le direct (0 s) est a GAUCHE : la position croit vers la droite.
+   */
+  const secondsFromRatio = (ratio: number) => Math.round(Math.min(1, Math.max(0, ratio)) * memory);
 
   const onPointerMove = (event: React.PointerEvent | PointerEvent) => {
     if (!dragging.current || !barRef.current) return;
@@ -247,30 +295,30 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
         <div className="hint">{t('replay.timelineHint', { memory })}</div>
 
         <div className="replay-timeline">
-          {/* Graduations : la memoire a gauche, le direct a droite. */}
+          {/* Graduations : le direct a gauche, la memoire (le plus ancien) a droite. */}
           <div className="replay-axis">
-            <span>{t('replay.axisOldest', { seconds: memory })}</span>
             <span className="replay-live-tag">{t('replay.axisLive')}</span>
+            <span>{t('replay.axisOldest', { seconds: memory })}</span>
           </div>
 
           {/* Pellicule : une vignette par seconde, comme un montage video. */}
-          {clipSrc && available >= 1 ? (
-            <ReplayFilmstrip key={`${selectedId}-${Math.floor(available)}`} src={clipSrc} seconds={available} memory={memory} />
+          {clipSrc && clipSeconds >= 1 ? (
+            <ReplayFilmstrip src={clipSrc} seconds={clipSeconds} memory={memory} />
           ) : null}
 
           <div className="replay-bar" ref={barRef}>
-            {/* Partie reellement memorisee : ancree au direct (a droite), elle
-                s'etend vers la gauche a mesure que le temps passe. */}
+            {/* Partie reellement memorisee : ancree au direct (a gauche), elle
+                s'etend vers la droite a mesure que le temps passe. */}
             <div className="replay-bar-fill" style={{ width: fillWidth }} />
-            {/* Tete de lecture : bord gauche du remplissage, donc elle avance
-                de la droite vers la gauche. */}
+            {/* Tete de lecture : bord droit du remplissage, donc elle avance
+                vers la droite. */}
             <div className="replay-playhead" style={{ left: playheadLeft }} aria-hidden />
             {/* Selection entre les deux poignees. */}
             <div
               className="replay-bar-select"
-              style={{ left: startLeft, right: `calc(100% - ${endLeft})` }}
+              style={{ left: endLeft, right: `calc(100% - ${startLeft})` }}
             />
-            {/* Poignee de debut (a gauche). */}
+            {/* Poignee de debut : la plus ANCIENNE, donc la plus a DROITE. */}
             <button
               type="button"
               className="replay-handle"
@@ -280,7 +328,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
             >
               <span className="replay-handle-label">{startAgo}s</span>
             </button>
-            {/* Poignee de fin (a droite). */}
+            {/* Poignee de fin : la plus RECENTE, donc la plus a GAUCHE. */}
             <button
               type="button"
               className="replay-handle"
@@ -297,8 +345,8 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
         {/* Le lecteur lit le clip du tampon : on peut donc s'y deplacer, et
             l'apercu montre l'image au debut de la plage choisie. */}
         <div className="replay-preview">
-          {clipSrc && available >= 1 ? (
-            <StreamPreview key={clipSrc} src={clipSrc} seekSeconds={previewSeek} />
+          {clipSrc && clipSeconds >= 1 ? (
+            <StreamPreview src={clipSrc} fromSeconds={previewFrom} toSeconds={previewTo} />
           ) : (
             <div className="replay-preview-empty">{t('replay.previewNoLive')}</div>
           )}

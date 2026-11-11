@@ -106,6 +106,7 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     replayFailed: t('remote.replayFailed'),
     replayDisabled: t('remote.replayDisabled'),
     replayUnavailable: t('remote.replayUnavailable'),
+    replayThumbAgo: t('remote.replayThumbAgo'),
   };
 
   return `<!doctype html>
@@ -201,17 +202,17 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   .replay-fields input { font:inherit; background:#0f1216; color:#e9ecef; height:42px;
                          border:1px solid #2c3037; border-radius:9px; padding:0 11px; }
   .modal-actions { display:flex; gap:9px; justify-content:flex-end; margin-top:12px; }
-  /* Barre de lecture du replay : memes reperes que sur le poste (memoire a
-     gauche, direct a droite), avec deux poignees deplacables. */
+  /* Barre de lecture du replay : memes reperes que sur le poste (direct a
+     GAUCHE, plus ancien a DROITE), avec deux poignees deplacables. */
   .replay-axis { display:flex; justify-content:space-between; font-size:11px;
                  color:#8b929a; margin:10px 0 6px; }
   .replay-live-tag { color:var(--err); font-weight:700; letter-spacing:.04em; }
   .replay-bar { position:relative; height:40px; border-radius:8px; background:#0f1216;
                 border:1px solid #2c3037; cursor:pointer; touch-action:none; }
-  /* Remplissage ancre au direct (a droite) : il s'etend vers la gauche. */
-  .replay-bar-fill { position:absolute; top:0; bottom:0; right:0;
-                     background:rgba(255,255,255,.06); border-radius:0 8px 8px 0; }
-  /* Tete de lecture : bord gauche du remplissage, elle avance vers la gauche. */
+  /* Remplissage ancre au direct (a gauche) : il s'etend vers la droite. */
+  .replay-bar-fill { position:absolute; top:0; bottom:0; left:0;
+                     background:rgba(255,255,255,.06); border-radius:8px 0 0 8px; }
+  /* Tete de lecture : bord droit du remplissage, elle avance vers la droite. */
   .replay-playhead { position:absolute; top:-4px; bottom:-4px; width:2px; margin-left:-1px;
                      background:var(--err); box-shadow:0 0 6px var(--err); pointer-events:none; }
   .replay-bar-select { position:absolute; top:0; bottom:0;
@@ -223,10 +224,16 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   .replay-handle-label { position:absolute; top:-20px; left:50%; transform:translateX(-50%);
                          font-size:10.5px; font-weight:700; color:var(--accent); white-space:nowrap;
                          background:#14171b; padding:1px 5px; border-radius:4px; }
-  /* Pellicule : une vignette par seconde, ancree a droite (le direct). */
-  .replay-filmstrip { position:relative; margin-left:auto; height:48px; overflow:hidden;
+  /* Pellicule : une vignette par seconde, ancree a gauche (le direct). */
+  .replay-filmstrip { position:relative; margin-right:auto; height:48px; overflow:hidden;
                       border-radius:6px 6px 0 0; margin-bottom:4px; background:#0f1216; }
-  .replay-filmstrip canvas { display:block; height:48px; width:100%; }
+  .replay-filmstrip canvas { display:block; height:48px; width:100%; cursor:crosshair; }
+  .replay-thumb-pop { position:absolute; bottom:100%; transform:translateX(-50%); margin-bottom:6px;
+                      padding:4px; border-radius:8px; background:#14171b; border:1px solid #2c3037;
+                      box-shadow:0 8px 24px rgba(0,0,0,.5); pointer-events:none; z-index:6; display:none; }
+  .replay-thumb-pop.show { display:block; }
+  .replay-thumb-pop-image { display:block; width:200px; height:112px; border-radius:5px; background:#000; }
+  .replay-thumb-pop-time { margin-top:3px; text-align:center; font-size:11px; font-weight:600; color:var(--accent); }
   /* Apercu de la selection. */
   .replay-preview { margin-top:12px; }
   .replay-preview video { width:100%; max-height:280px; border-radius:8px; background:#000; display:block; }
@@ -248,10 +255,10 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     <h3 id="replay-title"></h3>
     <div class="hint" id="replay-hint"></div>
     <div class="replay-axis">
-      <span id="replay-oldest"></span>
       <span class="replay-live-tag" id="replay-live"></span>
+      <span id="replay-oldest"></span>
     </div>
-    <div class="replay-filmstrip" id="replay-filmstrip"><canvas id="replay-filmstrip-canvas"></canvas></div>
+    <div class="replay-filmstrip" id="replay-filmstrip"><canvas id="replay-filmstrip-canvas"></canvas><div class="replay-thumb-pop" id="replay-thumb-pop"><canvas class="replay-thumb-pop-image" id="replay-thumb-pop-image"></canvas><div class="replay-thumb-pop-time" id="replay-thumb-pop-time"></div></div></div>
     <div class="replay-bar" id="replay-bar">
       <div class="replay-bar-fill" id="replay-fill"></div>
       <div class="replay-playhead" id="replay-playhead"></div>
@@ -774,9 +781,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
 
   // --- Replay a la demande -----------------------------------------------
   //
-  // Meme barre de lecture que sur le poste : la memoire a gauche, le direct a
-  // droite, et deux poignees deplacables (debut et fin). L'extrait est assemble
-  // par le poste, puis telecharge ici : rien n'est ecrit sur le poste central.
+  // Meme barre de lecture que sur le poste : le direct a GAUCHE, le plus ancien
+  // a DROITE, et deux poignees deplacables (debut et fin). L'extrait est
+  // assemble par le poste, puis telecharge ici : rien n'est ecrit sur le poste.
   var replayTarget = null;
   var replayMemory = 0;    // duree reellement memorisee (borne la plage)
   var replayConfigured = 0; // memoire configuree (echelle de la barre)
@@ -785,13 +792,20 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   var replayEnd = 0;       // secondes en arriere (fin)
   var replayDrag = null;
 
-  // Le direct est a DROITE, le plus ancien a GAUCHE : le progress part du
-  // direct et recule vers la gauche, comme sur une barre de temps video.
+  // Le direct (0 s) est a GAUCHE, le plus ancien a DROITE : le progress part
+  // du direct et avance vers la droite a mesure que le temps passe.
   function replayAgoLeft(seconds) {
-    return Math.min(100, Math.max(0, ((replayConfigured - seconds) / (replayConfigured || 1)) * 100));
+    return Math.min(100, Math.max(0, (seconds / (replayConfigured || 1)) * 100));
   }
 
-  /** Affiche l'image au debut de l'extrait choisi. */
+  /** Bornes de la plage dans le clip : debut et fin, en secondes depuis le debut. */
+  function replayBounds() {
+    var from = Math.max(0, replayMemory - replayStart);
+    var to = Math.max(from, replayMemory - replayEnd);
+    return { from: from, to: to };
+  }
+
+  /** Lit la plage selectionnee, en boucle : on ne montre QUE l'extrait choisi. */
   function renderReplayPreview() {
     var box = document.getElementById('replay-preview');
     if (!box || !replayClip) return;
@@ -802,19 +816,30 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       video.playsInline = true;
       video.controls = true;
       video.preload = 'auto';
-      video.src = replayClip;
       box.appendChild(video);
+      // Boucle sur la plage : on revient au debut des qu'on atteint la fin.
+      video.addEventListener('timeupdate', function () {
+        var b = replayBounds();
+        if (b.to > b.from && video.currentTime >= b.to) {
+          try { video.currentTime = b.from; } catch (e) {}
+        } else if (video.currentTime < b.from - 0.5) {
+          try { video.currentTime = b.from; } catch (e) {}
+        }
+      });
+      video.src = replayClip;
     }
-    // Le clip finit au direct : « il y a start s » = (memoire - start) depuis
-    // le debut du clip.
-    var seek = Math.max(0, replayMemory - replayStart);
+    var b2 = replayBounds();
     var apply = function () {
-      try { video.currentTime = seek; } catch (e) { /* duree inconnue */ }
-      try { video.pause(); } catch (e) { /* ignore */ }
+      if (video.currentTime < b2.from || video.currentTime > b2.to) {
+        try { video.currentTime = b2.from; } catch (e) {}
+      }
+      try { video.play(); } catch (e) {}
     };
     if (video.readyState >= 1) apply();
     else video.addEventListener('loadedmetadata', apply, { once: true });
   }
+
+  var replayThumbW = 120, replayThumbH = 48, replayThumbCount = 1;
 
   /** Dessine une vignette par seconde sur la pellicule, du plus ancien au direct. */
   function renderReplayFilmstrip() {
@@ -822,9 +847,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     var box = document.getElementById('replay-filmstrip');
     if (!canvas || !box || !replayClip || replayMemory < 1) return;
     var count = Math.max(1, Math.min(Math.floor(replayMemory), 120));
-    var w = 120, h = 48;
-    canvas.width = count * w;
-    canvas.height = h;
+    replayThumbCount = count;
+    canvas.width = count * replayThumbW;
+    canvas.height = replayThumbH;
     // Largeur affichee : proportionnelle a la memoire configuree, ancree a droite.
     box.style.width = Math.min(100, (replayMemory / (replayConfigured || 1)) * 100) + '%';
     var ctx = canvas.getContext('2d');
@@ -834,7 +859,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     video.preload = 'auto';
     var index = 0;
     var capture = function () {
-      ctx.drawImage(video, index * w, 0, w, h);
+      // Le plus RECENT (le direct) est a GAUCHE, le plus ancien a DROITE.
+      var column = count - 1 - index;
+      ctx.drawImage(video, column * replayThumbW, 0, replayThumbW, replayThumbH);
       index += 1;
       if (index >= count) return;
       video.currentTime = Math.min(index, Math.max(0, video.duration - 0.05));
@@ -844,6 +871,39 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     video.addEventListener('loadeddata', function () { if (index === 0) capture(); });
   }
 
+  /** Agrandit la vignette survolee, avec l'instant qu'elle represente. */
+  function showThumbPop(clientX) {
+    var canvas = document.getElementById('replay-filmstrip-canvas');
+    var box = document.getElementById('replay-filmstrip');
+    var pop = document.getElementById('replay-thumb-pop');
+    var img = document.getElementById('replay-thumb-pop-image');
+    var label = document.getElementById('replay-thumb-pop-time');
+    if (!canvas || !box || !pop || !img) return;
+    var rect = canvas.getBoundingClientRect();
+    var ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    var index = Math.min(replayThumbCount - 1, Math.floor(ratio * replayThumbCount));
+    img.width = 200;
+    img.height = 112;
+    var ctx = img.getContext('2d');
+    ctx.drawImage(canvas, index * replayThumbW, 0, replayThumbW, replayThumbH, 0, 0, 200, 112);
+    // La colonne 0 (a gauche) est le direct : « en arriere » = l'index lui-meme.
+    label.textContent = L.replayThumbAgo.replace('{seconds}', String(Math.max(0, Math.round(index))));
+    pop.style.left = ((index + 0.5) / replayThumbCount) * 100 + '%';
+    pop.classList.add('show');
+  }
+
+  function hideThumbPop() {
+    var pop = document.getElementById('replay-thumb-pop');
+    if (pop) pop.classList.remove('show');
+  }
+
+  (function wireFilmstripHover() {
+    var canvas = document.getElementById('replay-filmstrip-canvas');
+    if (!canvas) return;
+    canvas.addEventListener('mousemove', function (e) { showThumbPop(e.clientX); });
+    canvas.addEventListener('mouseleave', hideThumbPop);
+  })();
+
   function renderReplayBar() {
     var startLeft = replayAgoLeft(replayStart);
     var endLeft = replayAgoLeft(replayEnd);
@@ -852,9 +912,10 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     document.getElementById('replay-label-start').textContent = replayStart + 's';
     document.getElementById('replay-label-end').textContent = replayEnd + 's';
     var select = document.getElementById('replay-select');
-    select.style.left = startLeft + '%';
-    select.style.right = (100 - endLeft) + '%';
-    // Remplissage ancre a droite, tete de lecture sur son bord gauche.
+    // La selection va de la poignee de fin (la plus a gauche) au debut (droite).
+    select.style.left = endLeft + '%';
+    select.style.right = (100 - startLeft) + '%';
+    // Remplissage ancre a gauche, tete de lecture sur son bord droit.
     document.getElementById('replay-fill').style.width =
       Math.min(100, (replayMemory / (replayConfigured || 1)) * 100) + '%';
     document.getElementById('replay-playhead').style.left = replayAgoLeft(replayMemory) + '%';
@@ -869,7 +930,8 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     var rect = bar.getBoundingClientRect();
     var ratio = (clientX - rect.left) / rect.width;
     ratio = Math.min(1, Math.max(0, ratio));
-    return Math.round((1 - ratio) * replayConfigured);
+    // Le direct (0 s) est a GAUCHE : la position croit vers la droite.
+    return Math.round(ratio * replayConfigured);
   }
 
   function openReplayModal(id, name) {
@@ -885,6 +947,27 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     replayClip = stream && stream.replayClip ? stream.replayClip : '';
     replayStart = replayMemory;
     replayEnd = 0;
+    // On prepare un clip FRAIS (jeton) : son fichier n'est jamais remplace, donc
+    // la lecture tient pendant le direct. On remplace la video a l'arrivee.
+    if (replayClip) {
+      fetch(replayClip + '/new', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || data.ok !== true || !data.url) return;
+          replayClip = new URL(data.url, replayClip).toString();
+          if (typeof data.seconds === 'number' && data.seconds > 0) {
+            replayMemory = Math.min(replayConfigured, data.seconds);
+            replayStart = replayMemory;
+            replayEnd = 0;
+            renderReplayBar();
+          }
+          var box = document.getElementById('replay-preview');
+          if (box) box.innerHTML = '';
+          renderReplayFilmstrip();
+          renderReplayPreview();
+        })
+        .catch(function () {});
+    }
     document.getElementById('replay-title').textContent = L.replayTitle + (name ? ' - ' + name : '');
     document.getElementById('replay-hint').textContent = L.replayHint;
     document.getElementById('replay-oldest').textContent =

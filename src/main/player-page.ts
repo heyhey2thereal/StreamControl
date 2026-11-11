@@ -134,6 +134,21 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
   body.offline-black footer,
   body.offline-black main { display:none; }
   body.offline-black { background:#000; }
+  /* Mode « message » d'une cellule de scene : on ne veut PAS le lecteur, mais
+     un vrai ecran plein cadre (logo, texte en grand, anneau de chargement). */
+  body.offline-message header,
+  body.offline-message footer,
+  body.offline-message main { display:none; }
+  #offline-screen {
+    position:fixed; inset:0; display:none; flex-direction:column; gap:26px;
+    align-items:center; justify-content:center; text-align:center; padding:6vmin;
+  }
+  body.offline-message #offline-screen { display:flex; }
+  .offline-logo { width:min(22vmin,150px); height:auto; opacity:.9; }
+  .offline-text {
+    font-size:clamp(20px,5.2vmin,64px); font-weight:600; line-height:1.25;
+    max-width:92%; white-space:pre-wrap; word-break:break-word;
+  }
   .overlay {
     position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
     align-items:center; justify-content:center; text-align:center; padding:24px;
@@ -162,6 +177,14 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
   ${compactCss}</style>
 </head>
 <body>
+<div id="offline-screen">
+  <svg class="offline-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <rect x="8" y="20" width="84" height="60" rx="12" fill="none" stroke="currentColor" stroke-width="6"/>
+    <path d="M38 38 L62 50 L38 62 Z" fill="currentColor"/>
+  </svg>
+  <div class="offline-text" id="offline-text"></div>
+  <div class="spinner slow" id="offline-spinner"></div>
+</div>
 <header>
   <span class="dot" id="dot"></span>
   <h1>${name}</h1>
@@ -217,6 +240,9 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
   var dot = document.getElementById('dot');
   var stats = document.getElementById('stats');
   var alt = document.getElementById('alt');
+  var offlineText = document.getElementById('offline-text');
+  var offlineSpinner = document.getElementById('offline-spinner');
+  var offlineLogo = document.querySelector('.offline-logo');
 
   var hls = null;
   var peer = null;
@@ -266,24 +292,25 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
       stats.textContent = '';
       return true;
     }
-    // Mode message : fond et couleur choisis, texte et anneau eventuels.
+    // Mode message : un vrai ecran plein cadre (logo, texte en grand, anneau),
+    // SANS lecteur : c'est ce qu'OBS affiche dans sa cellule, et une image
+    // d'attente y serait parasite.
     document.body.classList.remove('offline-black');
-    overlay.classList.remove('hidden');
+    document.body.classList.add('offline-message');
+    offlineText.textContent = OFFLINE.text || '';
+    offlineText.style.color = OFFLINE.textColor || '#e9ecef';
+    offlineLogo.style.color = OFFLINE.textColor || '#e9ecef';
+    offlineSpinner.style.display = OFFLINE.spinner ? '' : 'none';
     dot.classList.remove('live');
-    title.textContent = '';
-    title.style.color = OFFLINE.textColor || '#e9ecef';
-    detail.style.color = OFFLINE.textColor || '#e9ecef';
-    detail.textContent = OFFLINE.text || '';
-    spinner.style.display = OFFLINE.spinner ? '' : 'none';
-    spinner.className = 'spinner slow';
     stats.textContent = T.offline;
     return true;
   }
 
   function hide() {
-    // Le flux publie : on efface un eventuel ecran noir et on remet les
-    // couleurs normales, sinon le fond personnalise resterait.
+    // Le flux publie : on efface un eventuel ecran personnalise et on remet les
+    // couleurs normales, sinon le fond ou l'ecran de message resterait.
     document.body.classList.remove('offline-black');
+    document.body.classList.remove('offline-message');
     document.body.style.background = '';
     overlay.classList.add('hidden');
     dot.classList.add('live');

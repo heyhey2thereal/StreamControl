@@ -117,19 +117,31 @@ Disponible sur **Windows**, **macOS** et **Linux**.
   (paramètres, journaux, enregistrements, tampon de replay) doivent aussi être
   supprimées. Par défaut : non.
 
-- **Écran « pas de flux » : activation explicite.** Une case, désactivée par
-  défaut, dans Paramètres > OBS Studio : tant qu'elle est décochée, la cellule
-  OBS se comporte comme une page de lecture ordinaire. Auparavant, avoir saisi
-  un texte autrefois suffisait à le voir apparaître, sans l'avoir demandé.
+- **Écran « pas de flux » : activation explicite et vrai écran plein cadre.**
+  Une case, désactivée par défaut, dans Paramètres > OBS Studio : tant qu'elle
+  est décochée, la cellule OBS se comporte comme une page de lecture ordinaire.
+  Une fois activée, la cellule n'affiche **plus le lecteur** : un logo, le texte
+  en grand et un anneau de chargement remplissent l'écran. Modifier un réglage
+  recharge aussitôt les sources dans OBS.
 
-- **Replay : progress de droite à gauche.** Le direct est à droite, le plus
-  ancien à gauche : la barre se remplit du direct vers la gauche, comme sur une
-  barre de temps vidéo.
+- **Replay : le plus ancien à droite, le direct à gauche.** La barre se remplit
+  du direct (à gauche) vers la droite : la tête de lecture avance vers la
+  droite. La poignée de droite fixe le début de l'extrait, celle de gauche la
+  fin.
 
-- **Replay : aperçu de la sélection et pellicule.** L'aperçu montre l'image au
-  début de l'extrait choisi, et une **pellicule** affiche **une vignette par
-  seconde** sous la barre, comme dans un logiciel de montage. Le tout est aussi
+- **Replay : aperçu de la sélection et pellicule.** L'aperçu ne montre **que la
+  plage choisie**, en boucle : c'est exactement ce que produira
+  « Sauvegarder ». Une **pellicule** affiche **une vignette par seconde** sous la
+  barre, comme dans un logiciel de montage ; **au survol**, la vignette est
+  agrandie avec l'instant qu'elle représente (« il y a N s »). Le tout est aussi
   disponible sur le panneau distant PC.
+
+- **Enregistrement : un seul dossier, et plus d'écrasement.** Selon que le
+  replay était actif ou non, l'enregistrement partait dans deux dossiers
+  différents : l'opérateur ouvrait le sous-dossier du flux et n'y voyait qu'une
+  ancienne vidéo. La capture écrit désormais dans le même sous-dossier que
+  MediaMTX. Les millisecondes sont conservées dans le nom : deux
+  enregistrements lancés dans la même seconde ne s'écrasent plus.
 
 ---
 

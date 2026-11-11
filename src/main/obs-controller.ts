@@ -532,6 +532,49 @@ export class ObsController extends EventEmitter {
   private static readonly SOURCE_PREFIX = 'StreamControl - ';
 
   /**
+   * Recharge les sources navigateur de StreamControl dans OBS.
+   *
+   * Appelee quand un reglage qui influe sur la page servie change (ecran « pas
+   * de flux », par exemple) : sans cela, l'operateur devait reconfigurer la
+   * scene a la main pour voir le changement.
+   *
+   * OBS recharge la page de la source : elle reprend donc le nouvel ecran.
+   *
+   * @returns le nombre de sources rechargees.
+   */
+  async refreshBrowserSources(): Promise<number> {
+    if (this.client.getState() !== 'connected') return 0;
+    try {
+      const list = await this.client.request<{ inputs?: Array<{ inputName?: string; inputKind?: string }> }>(
+        'GetInputList',
+      );
+      const ours = (list.inputs ?? []).filter(
+        (input) =>
+          typeof input.inputName === 'string' &&
+          input.inputName.startsWith(ObsController.SOURCE_PREFIX) &&
+          input.inputKind === 'browser_source',
+      );
+      for (const input of ours) {
+        if (!input.inputName) continue;
+        // `refreshnocache` recharge la page en ignorant le cache : c'est le
+        // geste equivalent au bouton « Actualiser » d'OBS.
+        await this.client.request('PressInputPropertiesButton', {
+          inputName: input.inputName,
+          propertyName: 'refreshnocache',
+        });
+      }
+      if (ours.length > 0) {
+        this.logger.info('obs', `${ours.length} source(s) navigateur rechargee(s).`);
+      }
+      return ours.length;
+    } catch (error) {
+      // OBS a pu se deconnecter entre-temps : ce n'est pas bloquant.
+      this.logger.warn('obs', `Rechargement des sources impossible : ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /**
    * Prepare une scene : elle affiche de 1 a 4 flux, repartis en grille.
    *
    * Chaque flux devient une source navigateur pointant sur notre page

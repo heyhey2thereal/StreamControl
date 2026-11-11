@@ -154,6 +154,11 @@ try {
   check('le message offline est servi', message.body.includes('Perdu Cam !'), 'texte personnalise present');
   check('la variable du flux est resolue', !message.body.includes('{flux_nom}'));
   check('la couleur de fond est appliquee', message.body.includes('#101010'));
+  // En mode message, OBS ne doit PAS afficher le lecteur : un vrai ecran plein
+  // cadre (logo + texte en grand + anneau), sans image d'attente parasite.
+  check('le lecteur est masque en mode message', message.body.includes('offline-message'), 'classe offline-message');
+  check('un logo accompagne le message', message.body.includes('offline-logo'), 'logo present');
+  check('un anneau de chargement est present', message.body.includes('offline-spinner'), 'anneau present');
 
   // Mode « ecran noir » : aucun texte, fond noir.
   await cdp.evaluate(`window.streamcontrol.saveSettings({ scene: { offlineMode: 'black' } })`);

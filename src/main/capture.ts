@@ -62,9 +62,28 @@ function safeName(name: string, path: string): string {
   return cleaned || path;
 }
 
+/**
+ * Sous-dossier d'un flux, sous le dossier des enregistrements.
+ *
+ * On garde les separateurs : MediaMTX remplace `%path` par le chemin tel quel,
+ * donc `live/cam1` cree `live/cam1/`. Notre capture doit ecrire au meme endroit,
+ * sinon les deux modes d'enregistrement se retrouveraient dans deux dossiers.
+ */
+function safeFolder(streamPath: string): string {
+  return streamPath
+    .split('/')
+    .filter(Boolean)
+    .map((part) => part.replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '') || 'flux')
+    .join('/') || 'flux';
+}
+
 /** Horodatage compact, pour le nom du fichier. */
 function stamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  const iso = new Date().toISOString().replace(/[:.]/g, '-');
+  // On garde les millisecondes : deux enregistrements lances dans la meme
+  // seconde ne doivent PAS porter le meme nom, sinon le second ecraserait le
+  // premier — c'est ce qui donnait l'impression qu'un ancien fichier revenait.
+  return `${iso.slice(0, 19)}-${iso.slice(20, 23)}`;
 }
 
 export class CaptureManager extends EventEmitter {
@@ -116,7 +135,12 @@ export class CaptureManager extends EventEmitter {
     const existing = this.captures.get(streamId);
     if (existing) return existing.target;
 
-    const output = path.join(this.getOutputDir(), 'captures');
+    // Meme rangement que MediaMTX : un sous-dossier par flux, sous le dossier
+    // des enregistrements. Sans cela, les enregistrements se retrouvaient dans
+    // DEUX dossiers differents selon que le replay etait actif ou non :
+    // l'operateur ouvrait le sous-dossier du flux et n'y voyait qu'une ancienne
+    // video, alors que le nouvel enregistrement etait ailleurs.
+    const output = path.join(this.getOutputDir(), safeFolder(streamPath));
     await fs.mkdir(output, { recursive: true });
     const target = path.join(output, `${safeName(streamName, streamPath)}_${stamp()}.mp4`);
 

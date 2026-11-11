@@ -35,6 +35,16 @@ import type { ObsController } from './obs-controller';
  */
 const BUFFER_CLIP_TTL_MS = 4000;
 
+/**
+ * Duree pendant laquelle un clip reste telechargeable apres avoir ete remplace.
+ *
+ * Un lecteur qui a commence a lire un clip continue de le lire : le fichier ne
+ * doit donc pas disparaitre sous ses pieds quand un nouveau clip est prepare.
+ * C'est ce qui faisait « casser » l'apercu, qui n'affichait l'image qu'apres
+ * l'arret du flux et un rafraichissement de page.
+ */
+const BUFFER_CLIP_KEEP_MS = 60_000;
+
 export interface WebPagesOptions {
   logger: Logger;
   streams: StreamController;
@@ -196,8 +206,20 @@ export class WebPagesServer {
    * Un clip est assemble a la demande, puis reutilise quelques secondes : la
    * page le demande plusieurs fois de suite, et le reconstruire a chaque fois
    * serait inutilement couteux.
+   *
+   * Le fichier est **immuable** : quand un nouveau clip est prepare, l'ancien
+   * reste telechargeable pendant une minute (voir `BUFFER_CLIP_KEEP_MS`). Un
+   * lecteur en cours ne se fait donc jamais couper le fichier sous les pieds —
+   * c'etait la cause du « l'apercu ne marche qu'apres avoir arrete le flux ».
    */
   private readonly bufferClips = new Map<string, { file: string; directory: string; at: number }>();
+  /** Clip courant par flux, avec son jeton et sa duree. */
+  private readonly currentClips = new Map<
+    string,
+    { file: string; directory: string; token: string; at: number; seconds: number }
+  >();
+  /** Clip en cours d'assemblage, par flux : evite d'en lancer plusieurs. */
+  private readonly clipBuilds = new Map<string, Promise<string | null>>();
 
   constructor(options: WebPagesOptions) {
     this.logger = options.logger;
@@ -346,6 +368,13 @@ export class WebPagesServer {
     // Clip du tampon : une video deplacable dans le temps, pour l'apercu et la
     // pellicule de la timeline. Le direct HLS ne se deplace pas ; ce clip, si.
     if (segments[0] === 'clip' && segments.length >= 2) {
+      // `/clip/<flux>/new` prepare un clip FRAIS et renvoie son jeton : la
+      // page fixe ainsi la video qu'elle va lire, sans risquer de la voir
+      // remplacee en cours de lecture.
+      if (segments.length === 3 && segments[2] === 'new') {
+        void this.prepareClip(response, segments[1]);
+        return;
+      }
       void this.serveBufferClip(request, response, segments.slice(1).join('/'));
       return;
     }
@@ -532,6 +561,32 @@ export class WebPagesServer {
   }
 
   /**
+   * Prepare un clip FRAIS et renvoie son jeton et sa duree.
+   *
+   * La page fixe ainsi la video qu'elle va lire : le jeton ne designe qu'un
+   * fichier, jamais remplace. C'est ce qui permet a l'apercu et a la pellicule
+   * de fonctionner **pendant** le direct, sans devoir arreter le flux.
+   */
+  private async prepareClip(response: ServerResponse, path: string): Promise<void> {
+    const endpoint = this.streams.list().find((entry) => entry.path === path);
+    if (!endpoint) {
+      this.sendJson(response, 404, { ok: false, message: 'Flux inconnu.' });
+      return;
+    }
+    const result = await this.newBufferClip(endpoint.id);
+    if (!result) {
+      this.sendJson(response, 503, { ok: false, message: 'Tampon indisponible.' });
+      return;
+    }
+    this.sendJson(response, 200, {
+      ok: true,
+      token: result.token,
+      seconds: result.seconds,
+      url: `/clip/${endpoint.path}/${result.token}`,
+    });
+  }
+
+  /**
    * Sert le clip du tampon d'un flux, avec support des requetes partielles.
    *
    * Le clip est assemble a la demande puis mis en cache quelques secondes : la
@@ -546,15 +601,22 @@ export class WebPagesServer {
   private async serveBufferClip(
     request: http.IncomingMessage,
     response: ServerResponse,
-    path: string,
+    rest: string,
   ): Promise<void> {
+    // Deux formes : `/clip/<flux>` (dernier clip, pour la pellicule) et
+    // `/clip/<flux>/<jeton>` (un clip precis, pour l'apercu).
+    const parts = rest.split('/').filter(Boolean);
+    const path = parts[0] ?? '';
+    const token = parts[1];
     const endpoint = this.streams.list().find((entry) => entry.path === path);
     if (!endpoint) {
       this.sendJson(response, 404, { ok: false, message: 'Flux inconnu.' });
       return;
     }
 
-    const clip = await this.bufferClipFor(endpoint.id);
+    const clip = token
+      ? this.bufferClips.get(`${endpoint.id}:${token}`)?.file ?? null
+      : await this.latestClipFor(endpoint.id);
     if (!clip) {
       this.sendJson(response, 503, { ok: false, message: 'Tampon indisponible.' });
       return;
@@ -601,25 +663,72 @@ export class WebPagesServer {
   }
 
   /**
-   * Clip du tampon d'un flux, mis en cache quelques secondes.
+   * Assemble un NOUVEAU clip du tampon et lui donne un jeton.
    *
-   * @returns le chemin du fichier, ou null si l'assemblage a echoue.
+   * Le fichier est **immuable** : une fois ecrit, il n'est plus modifie. Une
+   * page qui le lit (apercu, pellicule) ne risque donc jamais de voir son
+   * fichier remplace pendant la lecture — c'est ce qui faisait « casser »
+   * l'apercu tant que le flux n'etait pas arrete.
+   *
+   * @returns le jeton et la duree, ou null si l'assemblage a echoue.
    */
-  private async bufferClipFor(streamId: string): Promise<string | null> {
-    const cached = this.bufferClips.get(streamId);
-    if (cached && Date.now() - cached.at < BUFFER_CLIP_TTL_MS) return cached.file;
+  private async newBufferClip(streamId: string): Promise<{ token: string; seconds: number } | null> {
+    // Un assemblage a la fois par flux : deux demandes simultanees (apercu et
+    // pellicule) doivent partager le meme fichier.
+    const pending = this.clipBuilds.get(streamId);
+    if (pending) {
+      const file = await pending;
+      const current = this.currentClips.get(streamId);
+      return file && current ? { token: current.token, seconds: current.seconds } : null;
+    }
 
-    const result = await this.streams.buildBufferClip(streamId);
-    if (!result.ok || !result.file) return cached?.file ?? null;
+    const build = (async () => {
+      const result = await this.streams.buildBufferClip(streamId);
+      if (!result.ok || !result.file) return null;
 
-    // On remplace l'ancien clip et on efface son dossier temporaire.
-    if (cached) void fs.rm(cached.directory, { recursive: true, force: true }).catch(() => {});
-    this.bufferClips.set(streamId, {
-      file: result.file,
-      directory: result.directory ?? path.dirname(result.file),
-      at: Date.now(),
-    });
-    return result.file;
+      const token = randomUUID();
+      const directory = result.directory ?? path.dirname(result.file);
+      const at = Date.now();
+      // L'ancien clip courant reste telechargeable un moment : un lecteur en
+      // cours finit sa lecture au lieu de voir le fichier disparaitre.
+      const previous = this.currentClips.get(streamId);
+      if (previous) {
+        this.bufferClips.set(`${streamId}:${previous.token}`, { file: previous.file, directory: previous.directory, at });
+      }
+      this.bufferClips.set(`${streamId}:${token}`, { file: result.file, directory, at });
+      this.currentClips.set(streamId, { file: result.file, directory, token, at, seconds: result.seconds ?? 0 });
+      this.sweepBufferClips();
+      return result.file;
+    })();
+
+    this.clipBuilds.set(streamId, build);
+    try {
+      const file = await build;
+      const current = this.currentClips.get(streamId);
+      return file && current ? { token: current.token, seconds: current.seconds } : null;
+    } finally {
+      this.clipBuilds.delete(streamId);
+    }
+  }
+
+  /** Dernier clip d'un flux, reutilise s'il vient d'etre assemble. */
+  private async latestClipFor(streamId: string): Promise<string | null> {
+    const current = this.currentClips.get(streamId);
+    if (current && Date.now() - current.at < BUFFER_CLIP_TTL_MS) return current.file;
+    const fresh = await this.newBufferClip(streamId);
+    if (fresh) return this.currentClips.get(streamId)?.file ?? null;
+    return current?.file ?? null;
+  }
+
+  /** Supprime les clips perimes (remplaces depuis plus d'une minute). */
+  private sweepBufferClips(): void {
+    const limit = Date.now() - BUFFER_CLIP_KEEP_MS;
+    for (const [key, entry] of this.bufferClips) {
+      if (entry.at < limit) {
+        this.bufferClips.delete(key);
+        void fs.rm(entry.directory, { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
 
   /**

@@ -1,48 +1,57 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from '../hooks/useTranslation';
+
+/** Largeur d'une vignette dans le canevas (haute definition pour le survol). */
+const THUMB_WIDTH = 160;
+const THUMB_HEIGHT = 90;
+/** Taille de l'apercu agrandi, au survol. */
+const POP_WIDTH = 320;
+const POP_HEIGHT = 180;
 
 /**
  * Pellicule de la timeline : une vignette par seconde, comme dans un logiciel
  * de montage video.
  *
- * On lit le **clip du tampon** dans un element video hors ecran, et on dessine
- * une image par seconde sur un canevas. L'ordre suit celui de la barre : la
- * vignette la plus a gauche est la plus ancienne, la plus a droite le direct.
+ * On lit le **clip du tampon** (fichier fige, designe par un jeton) dans un
+ * element video hors ecran, et on dessine une image par seconde sur un canevas.
+ * L'ordre suit celui de la barre : la vignette la plus a gauche est la plus
+ * ancienne, la plus a droite le direct.
  *
- * Le clip a une duree finie : contrairement au direct HLS, on peut s'y deplacer
- * librement, ce qui est indispensable pour extraire une image a un instant
- * precis.
+ * Au **survol**, la vignette visee est agrandie au-dessus de la pellicule, avec
+ * l'instant qu'elle represente (« il y a N s »), comme dans un montage video.
  */
 export function ReplayFilmstrip({
   src,
   seconds,
   memory,
-  thumbWidth = 160,
-  thumbHeight = 90,
 }: {
-  /** Adresse du clip du tampon. */
+  /** Adresse du clip du tampon (avec son jeton). */
   src: string;
-  /** Duree reellement disponible dans le clip, en secondes. */
+  /** Duree du clip, en secondes. */
   seconds: number;
   /** Memoire configuree : largeur totale de la pellicule. */
   memory: number;
-  thumbWidth?: number;
-  thumbHeight?: number;
 }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const popRef = useRef<HTMLCanvasElement>(null);
+  const [hover, setHover] = useState<number | null>(null);
+
+  const count = Math.max(1, Math.min(Math.floor(seconds), 120));
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !src || seconds < 1) return undefined;
 
-    const count = Math.max(1, Math.min(Math.floor(seconds), 120));
-    canvas.width = count * thumbWidth;
-    canvas.height = thumbHeight;
+    canvas.width = count * THUMB_WIDTH;
+    canvas.height = THUMB_HEIGHT;
     const context = canvas.getContext('2d');
     if (!context) return undefined;
+    // Fond neutre : une vignette pas encore capturee ne doit pas etre blanche.
+    context.fillStyle = '#0f1216';
+    context.fillRect(0, 0, canvas.width, canvas.height);
 
     const video = document.createElement('video');
-    videoRef.current = video;
     video.src = src;
     video.muted = true;
     video.preload = 'auto';
@@ -51,14 +60,17 @@ export function ReplayFilmstrip({
     let cancelled = false;
     let index = 0;
 
-    // Une vignette par seconde, de la plus ancienne (a gauche) au direct (a droite).
+    // Une vignette par seconde. Le clip va du plus ancien (debut) au plus recent
+    // (fin) ; sur la pellicule, le plus RECENT (le direct) est a GAUCHE et le
+    // plus ANCIEN a DROITE. On dessine donc l'image d'index `index` a la
+    // position `count - 1 - index`.
     const capture = () => {
       if (cancelled) return;
-      context.drawImage(video, index * thumbWidth, 0, thumbWidth, thumbHeight);
+      const column = count - 1 - index;
+      context.drawImage(video, column * THUMB_WIDTH, 0, THUMB_WIDTH, THUMB_HEIGHT);
       index += 1;
       if (index >= count) return;
-      // On vise le debut de chaque seconde, au centre de l'intervalle.
-      video.currentTime = Math.min(index, Math.max(0, video.duration - 0.05));
+      video.currentTime = Math.min(index, Math.max(0, (video.duration || count) - 0.05));
     };
 
     video.addEventListener('loadedmetadata', () => {
@@ -72,9 +84,6 @@ export function ReplayFilmstrip({
     video.addEventListener('loadeddata', () => {
       if (index === 0) capture();
     });
-    video.addEventListener('error', () => {
-      // Clip illisible : la pellicule reste vide, ce n'est pas bloquant.
-    });
 
     return () => {
       cancelled = true;
@@ -84,18 +93,64 @@ export function ReplayFilmstrip({
       } catch {
         // Ignore.
       }
-      videoRef.current = null;
     };
-  }, [src, seconds, thumbWidth, thumbHeight]);
+  }, [src, seconds, count]);
 
-  // La pellicule occupe la largeur de la memoire configuree : elle est donc
-  // alignee sur la barre, et les vignettes restent a la bonne place meme quand
-  // la memoire n'est pas encore pleine.
+  // L'apercu agrandi recopie la vignette visee depuis le canevas : pas besoin
+  // d'un second lecteur, et l'image est deja en memoire.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const pop = popRef.current;
+    if (!canvas || !pop || hover === null) return;
+    pop.width = POP_WIDTH;
+    pop.height = POP_HEIGHT;
+    const context = pop.getContext('2d');
+    if (!context) return;
+    context.drawImage(
+      canvas,
+      hover * THUMB_WIDTH,
+      0,
+      THUMB_WIDTH,
+      THUMB_HEIGHT,
+      0,
+      0,
+      POP_WIDTH,
+      POP_HEIGHT,
+    );
+  }, [hover, count, src]);
+
+  // La pellicule occupe la largeur de la memoire configuree : elle est alignee
+  // sur la barre, et les vignettes restent a la bonne place meme quand la
+  // memoire n'est pas encore pleine.
   const widthPercent = `${Math.min(100, Math.max(0, (seconds / Math.max(1, memory)) * 100))}%`;
+
+  // La colonne `hover` est celle du survol, dans l'ordre affiche : la colonne 0
+  // (a gauche) est le direct (0 s en arriere), la derniere (a droite) est la
+  // plus ancienne.
+  const hoverSecondsAgo = hover === null ? null : Math.max(0, Math.round(hover));
+
+  const onMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    setHover(Math.min(count - 1, Math.floor(ratio * count)));
+  };
 
   return (
     <div className="replay-filmstrip" style={{ width: widthPercent }}>
-      <canvas ref={canvasRef} className="replay-filmstrip-canvas" />
+      <canvas
+        ref={canvasRef}
+        className="replay-filmstrip-canvas"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      />
+      {hover !== null && hoverSecondsAgo !== null ? (
+        <div className="replay-thumb-pop" style={{ left: `${((hover + 0.5) / count) * 100}%` }}>
+          <canvas ref={popRef} className="replay-thumb-pop-image" />
+          <div className="replay-thumb-pop-time">
+            {t('replay.thumbAgo', { seconds: hoverSecondsAgo })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

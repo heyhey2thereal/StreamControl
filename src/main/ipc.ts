@@ -121,6 +121,7 @@ export function registerIpcHandlers(context: IpcContext): void {
 
   handle<AppSettings>(CHANNELS.settingsSave, async (patch: Partial<AppSettings>) => {
     const before = settings.get().mediamtx;
+    const beforeScene = JSON.stringify(settings.get().scene);
     const beforeMaxLogLines = settings.get().ui.maxLogLines;
     const saved = await settings.save(patch);
     const after = saved.mediamtx;
@@ -132,6 +133,12 @@ export function registerIpcHandlers(context: IpcContext): void {
     // Le rendu doit voir le changement, meme s'il ne l'a pas demande : la
     // langue et les bornes s'appliquent sans redemarrage.
     getWindow()?.webContents.send(CHANNELS.eventSettingsChanged, saved);
+
+    // Un reglage de l'ecran « pas de flux » change la page servie aux sources
+    // OBS : on les recharge, sinon il fallait reconfigurer la scene a la main.
+    if (JSON.stringify(saved.scene) !== beforeScene) {
+      void obs.refreshBrowserSources();
+    }
 
     // Un port modifie ne prend effet qu'au redemarrage de MediaMTX : le
     // processus ecoute encore sur l'ancien. On redemarre donc si besoin, et

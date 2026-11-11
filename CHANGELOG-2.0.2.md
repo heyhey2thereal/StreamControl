@@ -260,19 +260,26 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - Fichiers : `src/shared/types.ts`, `src/main/settings.ts`, `src/main/main.ts`,
   `src/renderer/views/SettingsView.tsx`, `src/shared/i18n.ts`.
 
-## 23. Replay : progress de la droite vers la gauche, apercu et pellicule
-- **Progress de droite a gauche** : le direct est a droite, le plus ancien a
-  gauche. Le remplissage est ancre au direct et s'etend vers la gauche ; la
-  tete de lecture marque son bord gauche. C'est le sens d'une barre de temps
-  video.
-- **Apercu de la selection** : l'apercu lit desormais le **clip du tampon** (une
-  video deplacable dans le temps) et montre l'image au **debut de l'extrait
-  choisi**. Le direct HLS, lui, ne se deplace pas.
-- **Pellicule** : une **vignette par seconde** est dessinee sous la barre, comme
-  dans un logiciel de montage, du plus ancien (a gauche) au direct (a droite).
+## 23. Replay : timeline inversee, apercu de la selection et pellicule
+- **Le plus ancien a DROITE, le plus recent (le direct) a GAUCHE.** La memoire
+  s'etend du direct (a gauche) vers la droite : la tete de lecture avance vers
+  la droite a mesure que le temps passe. La poignee de droite fixe le debut de
+  l'extrait, celle de gauche la fin.
+- **Apercu de la selection** : l'apercu lit un **clip du tampon** (une video
+  deplacable dans le temps) et ne montre **que la plage choisie** : la lecture
+  part du debut de l'extrait, s'arrete a la fin, puis repart au debut. C'est
+  exactement ce que produira « Sauvegarder ».
+- **Clip fige par jeton** : l'apercu et la pellicule lisent un fichier
+  **immuable** (`GET /clip/<flux>/new` renvoie un jeton). Auparavant, le clip
+  etait remplace toutes les 4 s : le lecteur se faisait couper le fichier sous
+  les pieds, et l'apercu ne « marchait » qu'apres avoir arrete le flux et
+  rafraichi la page.
+- **Pellicule** : une **vignette par seconde** sous la barre, le direct a
+  gauche. **Au survol**, la vignette visee est **agrandie** au-dessus de la
+  pellicule avec l'instant qu'elle represente (« il y a N s »).
 - Le tout est aussi disponible sur le **panneau distant PC**, a l'identique.
-- Nouvelle route `GET /clip/<flux>` : le clip du tampon, avec support des
-  requetes partielles (`Range`), mis en cache quelques secondes.
+- Nouvelle route `GET /clip/<flux>` (dernier clip) et `GET /clip/<flux>/<jeton>`
+  (clip precis), avec support des requetes partielles (`Range`).
 - Fichiers : `src/renderer/views/ReplayView.tsx`,
   `src/renderer/components/ReplayFilmstrip.tsx` (nouveau),
   `src/renderer/components/StreamPreview.tsx`, `src/main/replay.ts`,
@@ -280,27 +287,51 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   `src/main/remote-desktop-page.ts`, `src/shared/types.ts`,
   `src/renderer/styles/global.css`, `src/shared/i18n.ts`.
 
+## 23bis. Enregistrement : un seul dossier, et plus d'ecrasement
+- **Cause 1** : selon que le replay etait actif ou non, l'enregistrement partait
+  dans **deux dossiers differents** — `captures/` pour la capture, `<chemin du
+  flux>/` pour MediaMTX. L'operateur ouvrait le sous-dossier du flux et n'y
+  voyait qu'une **ancienne video**, pendant que le nouvel enregistrement etait
+  ailleurs. La capture ecrit desormais dans le **meme sous-dossier que
+  MediaMTX**.
+- **Cause 2** : le nom du fichier portait la seconde. Deux enregistrements
+  lances dans la meme seconde ecrivaient le **meme** fichier, et le second
+  ecrasait le premier. Les **millisecondes** sont desormais conservees.
+- Fichiers : `src/main/capture.ts`.
+
+## 23ter. Ecran « pas de flux » : un vrai ecran plein cadre
+- En mode « message », la cellule OBS n'affiche **plus le lecteur** : un **logo**,
+  le **texte en grand** et un **anneau de chargement** remplissent la cellule.
+- Enregistrer un reglage de cet ecran **recharge aussitot** les sources
+  navigateur d'OBS (`refreshnocache`) : plus besoin de reconfigurer la scene a
+  la main.
+- Fichiers : `src/main/player-page.ts`, `src/main/obs-controller.ts`,
+  `src/main/ipc.ts`.
+
 ## 24. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
   lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, **pellicule
   et apercu presents**, **clip du tampon servi en 206 (requetes partielles)**,
-  replay demande depuis un appareil (preparation, telechargement MP4 **sans
-  en-tete d'autorisation**, nom de fichier, suppression, 403 sans autorisation),
-  vidage de la memoire.
+  **direct a gauche et graduation « Direct » en tete**, **survol d'une vignette
+  (apercu agrandi + « il y a N s »)**, replay demande depuis un appareil
+  (preparation, telechargement MP4 **sans en-tete d'autorisation**, nom de
+  fichier, suppression, 403 sans autorisation), vidage de la memoire.
 - `tests/e2e/recording.mjs` : demarrage de l'enregistrement en moins de 3 s,
-  duree du fichier conforme au temps enregistre (sans perte), duree non nulle.
+  duree du fichier conforme au temps enregistre (sans perte), duree non nulle,
+  **fichier range dans le sous-dossier du flux**, **un second enregistrement
+  n'ecrase pas le premier**.
 - `tests/e2e/update.mjs` : fenetre au lancement, notes, trois reponses,
   **version plus ancienne ignoree**, version ecartee, verification sans jeton,
   pas de retour de la fenetre apres un changement de reglage.
 - `tests/e2e/player.mjs` : son de l'apercu (video non `muted`), ecran « pas de
   flux » **desactive par defaut puis active** (message avec variable resolue,
-  fond personnalise, mode noir).
+  fond personnalise, mode noir, **lecteur masque, logo et anneau presents**).
 - `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
   autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
-  grille, barre de lecture du replay a deux poignees, **pellicule et apercu**,
-  progress de la droite vers la gauche.
+  grille, barre de lecture du replay a deux poignees, **pellicule et apercu**.
 - `tests/e2e/obs.mjs` : parametre unique par source, resolution par cellule,
-  flux desactive masque dans OBS.
+  flux desactive masque dans OBS, **rechargement des sources apres un reglage de
+  l'ecran « pas de flux »**.
 - `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
   de temps par piste), **duree totale annoncee par l'en-tete assemble**,
   **lecture d'un segment en plusieurs fois sans perte**, **reparation de la
@@ -309,5 +340,5 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **47 tests unitaires · 511 verifications e2e · 0 echec.**
+Chiffres : **47 tests unitaires · 522 verifications e2e · 0 echec.**
 
