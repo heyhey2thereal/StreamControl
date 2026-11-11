@@ -84,16 +84,63 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   `src/renderer/views/ObsView.tsx`, `src/renderer/styles/global.css`,
   `src/shared/i18n.ts`.
 
-## 6. Tests
+## 6. Duree reelle des segments de replay (bug majeur)
+- **Symptome** : « un replay de 100 s donne 3 s ». La duree annoncee et le
+  fichier produit etaient tres en dessous de la plage demandee.
+- **Cause** : le replay comptait les segments et multipliait par la duree
+  demandee a MediaMTX (2 s). Or MediaMTX **aligne ses segments sur le GOP de la
+  source** : un segment ne dure donc presque jamais 2 s. Compter les segments
+  donnait une duree fausse — et un replay bien plus court que voulu.
+- **Correction** : `fmp4SegmentSeconds()` lit la **duree reelle** portee par le
+  `mdhd` (base de temps) et les `trun` (duree de chaque image). Deux pieges
+  traites : un segment MediaMTX contient **plusieurs fragments** (`moof`), qu'il
+  faut tous additionner ; et chaque piste a **sa propre base de temps** (90000
+  en video, souvent 48000 en audio), mise en correspondance par identifiant.
+  `segmentDurations` / `selectSegments` / `saveReplay` s'appuient dessus.
+- Verifie sur de vrais segments MediaMTX : 8 segments de 2 s -> 16 s lues.
+- Fichiers : `src/main/fmp4.ts`, `src/main/replay.ts`.
+
+## 7. Replay range par flux, et replay depuis un appareil
+- **Sous-dossier par flux** : les replays du poste sont ecrits dans
+  `<dossier replay>/<Nom-du-flux>/<horodatage>.mp4`, comme les enregistrements.
+- **Replay a la demande depuis le panneau distant** : un appareil du reseau peut
+  extraire un extrait des dernieres secondes. L'extrait est assemble **sur le
+  poste** dans un dossier temporaire, **telecharge par l'appareil**, puis
+  **supprime** : rien ne s'ecrit dans le dossier des replays du poste. Une
+  modale propose le debut et la fin de l'extrait, en secondes en arriere.
+- Routes `GET /remote/replay/<jeton>` et `POST /remote/replay` ; autorisation
+  « Enregistrer la lecture dans le navigateur » exigee (403 sinon). Un jeton de
+  telechargement est a usage unique et expire au bout de 10 minutes.
+- Fichiers : `src/main/replay.ts` (`planReplay`, `buildReplay`),
+  `src/main/stream-controller.ts`, `src/main/web-pages.ts`,
+  `src/main/main.ts`, `src/main/remote-desktop-page.ts`, `src/shared/i18n.ts`.
+
+## 8. Plein ecran du panneau distant qui « sortait tout seul »
+- **Cause** : la grille etait reconciliee a chaque rafraichissement (2 s) par un
+  `appendChild` de la carte. Or **deplacer un element en plein ecran** fait
+  sortir le navigateur du plein ecran : la carte plein ecran en sortait donc au
+  bout de deux secondes.
+- **Correction** : la grille ne deplace plus une carte dont la position n'a pas
+  change (`node.nextElementSibling !== reference`). Le plein ecran tient.
+- Fichiers : `src/main/remote-desktop-page.ts`.
+
+## 9. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
-  lisible.
+  lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, replay
+  demande depuis un appareil (preparation, telechargement MP4, suppression,
+  403 sans autorisation).
+- `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
+  autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
+  grille, presence du replay.
 - `tests/e2e/obs.mjs` : parametre unique par source, resolution par cellule,
   flux desactive masque dans OBS.
 - `tests/e2e/player.mjs` : ecran « pas de flux » (message avec variable
   resolue, fond personnalise, mode noir).
-- `tests/logic.test.mjs` : reglages de replay bornes.
+- `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
+  de temps par piste), selection d'une plage de replay, reglages de replay
+  bornes.
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **41 tests unitaires · 482 verifications e2e · 0 echec.**
+Chiffres : **43 tests unitaires · 491 verifications e2e · 0 echec.**
 

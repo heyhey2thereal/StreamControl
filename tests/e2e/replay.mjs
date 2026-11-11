@@ -6,6 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import WebSocket from '../../node_modules/ws/wrapper.mjs';
 import { startStaticServer, startApp, waitForAppPage, createChecker, createCdp, waitFor, sleep } from './harness.mjs';
@@ -16,8 +17,38 @@ const DEBUG_PORT = 9410;
 const USER_DATA = '/tmp/sc-e2e-replay';
 const BUFFER_DIR = '/tmp/sc-replay-buffer';
 const REC_DIR = '/tmp/sc-replay-rec';
+const WEB_PAGES_PORT = 48096;
+const PC_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
 
 const { check, summary } = createChecker();
+
+/** Requete HTTP avec en-tetes et corps optionnel. */
+function request(url, { method = 'GET', headers = {}, body = '' } = {}) {
+  return new Promise((resolve) => {
+    const target = new URL(url);
+    const payload = body ? Buffer.from(body) : null;
+    const req = http.request(
+      {
+        host: target.hostname,
+        port: target.port,
+        path: target.pathname + target.search,
+        method,
+        headers: { ...headers, ...(payload ? { 'Content-Length': payload.length } : {}) },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () =>
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }),
+        );
+      },
+    );
+    req.on('error', () => resolve({ status: 0, headers: {}, body: '' }));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
 
 fs.rmSync(BUFFER_DIR, { recursive: true, force: true });
 fs.rmSync(REC_DIR, { recursive: true, force: true });
@@ -44,7 +75,7 @@ try {
   // Le replay est active. La memoire et le minimum sont courts pour un test
   // rapide : 40 s de memoire, minimum 5 s.
   await cdp.evaluate(`window.streamcontrol.saveSettings({
-    mediamtx: { binaryPath: ${JSON.stringify(MEDIAMTX)} },
+    mediamtx: { binaryPath: ${JSON.stringify(MEDIAMTX)}, webPagesPort: ${WEB_PAGES_PORT} },
     recording: { path: ${JSON.stringify(REC_DIR)} },
     replay: { enabled: true, bufferSeconds: 40, minimumSeconds: 5, path: ${JSON.stringify(BUFFER_DIR)} }
   })`);
@@ -145,6 +176,61 @@ try {
   await sleep(400);
   const after = await cdp.evaluate('document.querySelector(".replay-summary")?.textContent ?? ""');
   check('deplacer une poignee change la duree', before !== after, `${before} -> ${after}`);
+
+  // --- Replay demande depuis un appareil du reseau -----------------------
+  //
+  // Le panneau distant prepare l'extrait sur le poste, l'appareil le
+  // telecharge, puis le fichier temporaire est supprime : rien ne doit rester
+  // dans le dossier des replays du poste.
+  console.log('\n--- replay depuis un appareil ---');
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ remote: { enabled: true, desktop: { download: true } } })`);
+  await sleep(900);
+
+  const base = `http://127.0.0.1:${WEB_PAGES_PORT}`;
+  const pair = await request(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'User-Agent': PC_UA, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: '' }),
+  });
+  const pairId = JSON.parse(pair.body).id;
+  await cdp.evaluate(`window.streamcontrol.remoteApprove(${JSON.stringify(pairId)}, true)`);
+  await sleep(400);
+  const token = JSON.parse((await request(`${base}/remote/pair/${pairId}`)).body).token;
+  check('un appareil obtient un jeton', Boolean(token));
+
+  const authHeaders = { 'User-Agent': PC_UA, 'X-Remote-Token': token };
+
+  // L'etat annonce les reglages du replay : l'appareil sait quoi demander.
+  const remoteState = JSON.parse((await request(`${base}/remote/state`, { headers: authHeaders })).body);
+  check('l etat porte les reglages du replay', remoteState.replay && remoteState.replay.enabled === true, JSON.stringify(remoteState.replay));
+
+  // Preparation de l'extrait.
+  const prepared = await request(`${base}/remote/replay`, {
+    method: 'POST',
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: target.id, fromSeconds: 10, toSeconds: 0 }),
+  });
+  const preparedBody = JSON.parse(prepared.body);
+  check('l appareil prepare un replay', preparedBody.ok === true && typeof preparedBody.url === 'string', prepared.body.slice(0, 120));
+
+  // Telechargement : le corps est un MP4, et le fichier temporaire disparait.
+  const download = await request(`${base}${preparedBody.url}`, { headers: authHeaders });
+  check('le telechargement renvoie un MP4', download.headers['content-type'] === 'video/mp4', String(download.headers['content-type']));
+  check('le MP4 telecharge n est pas vide', download.body.length > 1000, `${download.body.length} octets`);
+
+  // Une seconde tentative sur le meme jeton echoue : le fichier a ete supprime.
+  const again = await request(`${base}${preparedBody.url}`, { headers: authHeaders });
+  check('le replay est supprime apres telechargement', again.status === 404, `HTTP ${again.status}`);
+
+  // Sans l'autorisation « download », le serveur refuse (403).
+  await cdp.evaluate(`window.streamcontrol.saveSettings({ remote: { desktop: { download: false } } })`);
+  await sleep(900);
+  const denied = await request(`${base}/remote/replay`, {
+    method: 'POST',
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: target.id, fromSeconds: 10, toSeconds: 0 }),
+  });
+  check('le replay est refuse sans autorisation', denied.status === 403, `HTTP ${denied.status}`);
 
   cdp.close();
 } catch (error) {

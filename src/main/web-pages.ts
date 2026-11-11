@@ -12,6 +12,9 @@
  */
 import http from 'node:http';
 import type { ServerResponse } from 'node:http';
+import path from 'node:path';
+import { createReadStream, promises as fs } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { Logger } from './logger';
 import type { StreamController } from './stream-controller';
 import { createTranslator, DEFAULT_LANGUAGE, isLanguage } from '../shared/i18n';
@@ -54,6 +57,12 @@ export interface WebPagesOptions {
   obs?: ObsController;
   /** Actions du poste declenchables a distance (verrouiller, redemarrer...). */
   remoteActions?: RemoteActions;
+  /**
+   * Reglages du replay, pour le panneau distant : memoire et minimum.
+   *
+   * Absent = le replay n'est pas propose aux appareils.
+   */
+  getReplayConfig?: () => { enabled: boolean; bufferSeconds: number; minimumSeconds: number };
 }
 
 /** Actions du poste que le panneau distant peut declencher. */
@@ -68,6 +77,14 @@ export interface RemoteActions {
   runMacro: (id: string) => Promise<{ ok: boolean; executed: number; message?: string }>;
   /** Macros actives, proposees comme boutons sur le telephone. */
   listMacros?: () => Array<{ id: string; name: string }>;
+  /**
+   * Prepare un replay d'un flux, a telecharger par l'appareil.
+   *
+   * Le fichier est assemble dans un dossier temporaire : c'est l'appareil qui
+   * le telecharge, puis il est supprime. Rien n'est ecrit sur le poste.
+   */
+  buildReplay?: (id: string, options: { fromSeconds?: number; toSeconds?: number }) =>
+    Promise<{ ok: boolean; file?: string; seconds?: number; message: string }>;
 }
 
 /** Echappe le texte insere dans le HTML. */
@@ -155,6 +172,15 @@ export class WebPagesServer {
   private readonly remote?: RemoteManager;
   private readonly obs?: ObsController;
   private readonly remoteActions?: RemoteActions;
+  private readonly getReplayConfig?: WebPagesOptions['getReplayConfig'];
+  /**
+   * Replays prepares pour un appareil, en attente de telechargement.
+   *
+   * Le fichier est assemble a la demande, puis telecharge par l'appareil et
+   * supprime. La cle est un jeton opaque : l'appareil ne connait jamais le
+   * chemin sur le poste, et ne peut donc rien lire d'autre.
+   */
+  private readonly pendingReplays = new Map<string, { file: string; directory: string; at: number }>();
 
   constructor(options: WebPagesOptions) {
     this.logger = options.logger;
@@ -168,6 +194,7 @@ export class WebPagesServer {
     this.remote = options.remote;
     this.obs = options.obs;
     this.remoteActions = options.remoteActions;
+    this.getReplayConfig = options.getReplayConfig;
   }
 
   /**
@@ -608,7 +635,118 @@ export class WebPagesServer {
       return;
     }
 
+    // --- Replay depuis un appareil ----------------------------------------
+    // L'extrait est assemble sur le poste, puis telecharge par l'appareil et
+    // supprime : rien ne reste dans le dossier des replays du poste.
+    if (segments[1] === 'replay') {
+      if (!permissions.download) {
+        this.sendJson(response, 403, { ok: false, message: 'Action non autorisee.' });
+        return;
+      }
+      // Preparation : assemble l'extrait et renvoie un jeton de telechargement.
+      if (segments.length === 2 && request.method === 'POST') {
+        await this.prepareReplayDownload(response, body);
+        return;
+      }
+      // Telechargement : sert le fichier prepare, puis le supprime.
+      if (segments.length === 3 && request.method === 'GET') {
+        this.servePendingReplay(response, segments[2]);
+        return;
+      }
+      this.sendJson(response, 404, { error: 'unknown' });
+      return;
+    }
+
     this.sendJson(response, 404, { error: 'unknown' });
+  }
+
+  /**
+   * Prepare un replay et renvoie un jeton de telechargement.
+   *
+   * Le fichier assemble est ecrit dans un dossier temporaire, jamais dans le
+   * dossier des replays du poste. Un balayage supprime les extraits trop vieux
+   * (un appareil qui a ferme la page avant de telecharger ne doit pas laisser
+   * de fichiers derriere lui).
+   */
+  private async prepareReplayDownload(
+    response: ServerResponse,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const actions = this.remoteActions;
+    if (!actions?.buildReplay) {
+      this.sendJson(response, 503, { ok: false, message: 'Replay indisponible.' });
+      return;
+    }
+    const id = typeof body.id === 'string' ? body.id : '';
+    if (!id) {
+      this.sendJson(response, 400, { ok: false, message: 'Flux manquant.' });
+      return;
+    }
+
+    const fromSeconds = typeof body.fromSeconds === 'number' ? body.fromSeconds : undefined;
+    const toSeconds = typeof body.toSeconds === 'number' ? body.toSeconds : undefined;
+
+    const result = await actions.buildReplay(id, { fromSeconds, toSeconds });
+    if (!result.ok || !result.file) {
+      this.sendJson(response, 200, { ok: false, message: result.message });
+      return;
+    }
+
+    this.sweepPendingReplays();
+    const token = randomUUID();
+    const directory = path.dirname(result.file);
+    this.pendingReplays.set(token, { file: result.file, directory, at: Date.now() });
+    this.sendJson(response, 200, {
+      ok: true,
+      token,
+      seconds: result.seconds ?? 0,
+      url: `/remote/replay/${token}`,
+      message: result.message,
+    });
+  }
+
+  /** Sert un replay prepare, puis supprime le fichier et son dossier. */
+  private servePendingReplay(response: ServerResponse, token: string): void {
+    const entry = this.pendingReplays.get(token);
+    if (!entry) {
+      this.sendJson(response, 404, { ok: false, message: 'Replay expire ou deja telecharge.' });
+      return;
+    }
+    this.pendingReplays.delete(token);
+
+    const cleanup = () => void fs.rm(entry.directory, { recursive: true, force: true }).catch(() => {});
+    let stream;
+    try {
+      stream = createReadStream(entry.file);
+    } catch {
+      cleanup();
+      this.sendJson(response, 404, { ok: false, message: 'Fichier introuvable.' });
+      return;
+    }
+
+    response.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': 'attachment; filename="replay.mp4"',
+      'Cache-Control': 'no-store',
+    });
+    stream.pipe(response);
+    stream.on('close', cleanup);
+    stream.on('error', () => {
+      cleanup();
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    });
+  }
+
+  /** Supprime les replays prepares mais jamais telecharges (plus de 10 min). */
+  private sweepPendingReplays(): void {
+    const limit = Date.now() - 10 * 60 * 1000;
+    for (const [token, entry] of this.pendingReplays) {
+      if (entry.at < limit) {
+        this.pendingReplays.delete(token);
+        void fs.rm(entry.directory, { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
 
   /**
@@ -695,6 +833,9 @@ export class WebPagesServer {
       mediamtxRunning: this.isMediamtxRunning(),
       // Les macros actives, pour les proposer comme boutons sur l'appareil.
       macros: this.remoteActions?.listMacros?.() ?? [],
+      // Reglages du replay : l'appareil sait ainsi si l'extraction est
+      // possible, et quelle plage demander.
+      replay: this.getReplayConfig?.() ?? null,
       permissions,
     };
   }

@@ -108,6 +108,127 @@ function tfhdTrackId(buffer: Buffer, box: Box): number {
   return buffer.readUInt32BE(box.start + 12);
 }
 
+/** Boites conteneurs dans lesquelles on peut descendre sans risque. */
+const CONTAINER_BOXES = new Set([
+  'moov', 'trak', 'mdia', 'minf', 'stbl', 'moof', 'traf', 'mvex', 'edts', 'dinf',
+]);
+
+/**
+ * Cherche la premiere boite d'un type donne, en descendant les conteneurs.
+ *
+ * On ne descend que dans les boites conteneurs connues : lire `mdat` comme un
+ * conteneur reviendrait a interpreter des donnees d'echantillons comme des
+ * boites, et a tomber sur n'importe quoi.
+ */
+function findBox(buffer: Buffer, type: string, start = 0, end = buffer.length): Box | null {
+  for (const box of listBoxes(buffer, start, end)) {
+    if (box.type === type) return box;
+    if (CONTAINER_BOXES.has(box.type)) {
+      const nested = findBox(buffer, type, box.start + 8, box.start + box.size);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+/**
+ * Base de temps (timescale) portee par un `mdhd`.
+ *
+ * Le champ est precede de l'en-tete (8), de `version` + `flags` (4) et des deux
+ * dates (`creation_time`, `modification_time`), dont la taille depend de la
+ * version : 4 octets en version 0, 8 en version 1. Lire directement a +12
+ * tomberait donc sur `creation_time`, pas sur la base de temps.
+ */
+function mdhdTimescale(buffer: Buffer, mdhd: Box): number {
+  const version = buffer.readUInt8(mdhd.start + 8);
+  const dateSize = version === 1 ? 8 : 4;
+  const offset = mdhd.start + 8 + 4 + 2 * dateSize;
+  if (offset + 4 > mdhd.start + mdhd.size) return 0;
+  return buffer.readUInt32BE(offset);
+}
+
+/** Identifiant de piste porte par un `tkhd`. */
+function tkhdTrackId(buffer: Buffer, box: Box): number {
+  const version = buffer.readUInt8(box.start + 8);
+  const dateSize = version === 1 ? 8 : 4;
+  return buffer.readUInt32BE(box.start + 8 + 4 + 2 * dateSize);
+}
+
+/**
+ * Duree, en unites de la base de temps, de tous les `trun` d'un `traf`.
+ */
+function trafDuration(buffer: Buffer, traf: Box): bigint {
+  const children = childBoxes(buffer, traf);
+  const tfhd = children.find((entry) => entry.type === 'tfhd');
+  const fallback = tfhd ? tfhdDefaultDuration(buffer, tfhd) : 0;
+  let total = 0n;
+  for (const child of children) {
+    if (child.type === 'trun') total += trunDuration(buffer, child, fallback);
+  }
+  return total;
+}
+
+/**
+ * Duree reelle d'un segment, en secondes.
+ *
+ * MediaMTX aligne ses segments sur le GOP de la source : un segment ne dure
+ * donc PAS la duree demandee (2 s). Compter les segments pour en deduire la
+ * duree donne un resultat faux — c'est ce qui faisait qu'un replay de 100 s
+ * n'en durait que 3.
+ *
+ * On lit la duree reellement portee par les `trun`, divisee par la base de
+ * temps (`timescale`) de la piste concernee. Chaque piste a la sienne (90000
+ * pour la video, souvent 48000 pour l'audio) : on les met en correspondance par
+ * identifiant, et on retient la plus longue — un segment qui contient une piste
+ * video et une piste audio dure le temps de la plus longue.
+ *
+ * Un segment MediaMTX contient PLUSIEURS fragments (`moof`/`mdat`) : on les
+ * additionne tous.
+ *
+ * @returns la duree en secondes, ou 0 si elle n'est pas lisible.
+ */
+export function fmp4SegmentSeconds(segment: Buffer): number {
+  const moov = findBox(segment, 'moov');
+  if (!moov) return 0;
+
+  // Base de temps par piste : identifiant -> timescale.
+  const timescales = new Map<number, number>();
+  for (const trak of childBoxes(segment, moov)) {
+    if (trak.type !== 'trak') continue;
+    const children = childBoxes(segment, trak);
+    const tkhd = children.find((entry) => entry.type === 'tkhd');
+    const mdia = children.find((entry) => entry.type === 'mdia');
+    if (!tkhd || !mdia) continue;
+    const mdhd = findBox(segment, 'mdhd', mdia.start + 8, mdia.start + mdia.size);
+    if (!mdhd) continue;
+    const timescale = mdhdTimescale(segment, mdhd);
+    if (timescale > 0) timescales.set(tkhdTrackId(segment, tkhd), timescale);
+  }
+  if (timescales.size === 0) return 0;
+
+  let seconds = 0;
+  // Duree cumulee par piste, sur tous les fragments du segment.
+  const perTrack = new Map<number, number>();
+  for (const moof of listBoxes(segment)) {
+    if (moof.type !== 'moof') continue;
+    for (const traf of childBoxes(segment, moof)) {
+      if (traf.type !== 'traf') continue;
+      const children = childBoxes(segment, traf);
+      const tfhd = children.find((entry) => entry.type === 'tfhd');
+      if (!tfhd) continue;
+      const trackId = tfhdTrackId(segment, tfhd);
+      const timescale = timescales.get(trackId) ?? 0;
+      if (timescale <= 0) continue;
+      const duration = Number(trafDuration(segment, traf)) / timescale;
+      perTrack.set(trackId, (perTrack.get(trackId) ?? 0) + duration);
+    }
+  }
+  for (const duration of perTrack.values()) {
+    if (duration > seconds) seconds = duration;
+  }
+  return seconds;
+}
+
 /**
  * Reecrit un fragment : numero de sequence et temps de decodage cumule.
  *

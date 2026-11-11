@@ -102,6 +102,15 @@ try {
   check('elle propose de tout lire et tout arreter', pc.body.includes('Tout lire') && pc.body.includes('Tout arreter'));
   // La grille est reconciliee : le rafraichissement est rapide (2 s), pas 5 s.
   check('le rafraichissement de la grille est rapide', /}, 2000\)/.test(pc.body), 'intervalle 2000 ms');
+  // Le plein ecran ne doit pas etre quitte a chaque rafraichissement : la page
+  // ne deplace plus une carte dont la position n'a pas change.
+  check(
+    'la carte n est pas deplacee sans raison',
+    pc.body.includes('node.nextElementSibling !== reference'),
+    'reconciliation sans deplacement inutile',
+  );
+  // Le replay a la demande est propose quand il est autorise et actif.
+  check('elle propose l extraction d un replay', pc.body.includes('Extraire un replay'));
 
   const phone = await request(`${base}/remote`, { headers: { 'User-Agent': PHONE_UA } });
   check('la page telephone est servie', phone.status === 200, `HTTP ${phone.status}`);

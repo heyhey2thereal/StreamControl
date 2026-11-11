@@ -92,6 +92,20 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     fullscreenUnsupported: t('remote.fullscreenUnsupported'),
     viewers: t('remote.viewers'),
     noPermission: t('remote.noPermission'),
+    // Replay a la demande : extrait telecharge sur l'appareil.
+    replay: t('remote.replay'),
+    replayTitle: t('remote.replayTitle'),
+    replayHint: t('remote.replayHint'),
+    replayFrom: t('remote.replayFrom'),
+    replayTo: t('remote.replayTo'),
+    replayMemory: t('remote.replayMemory'),
+    replayWhole: t('remote.replayWhole'),
+    replaySave: t('remote.replaySave'),
+    replayBusy: t('remote.replayBusy'),
+    replayDone: t('remote.replayDone'),
+    replayFailed: t('remote.replayFailed'),
+    replayDisabled: t('remote.replayDisabled'),
+    replayUnavailable: t('remote.replayUnavailable'),
   };
 
   return `<!doctype html>
@@ -173,6 +187,20 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   .toast.err { border-color:#4a2427; color:#ff9a9e; }
   .muted { color:#7a828a; font-size:13px; }
   .hint { color:#7a828a; font-size:12px; margin-top:6px; }
+  /* Modale : extraire un replay. */
+  .modal { position:fixed; inset:0; z-index:8; display:none; align-items:center;
+           justify-content:center; background:rgba(0,0,0,.55); padding:18px; }
+  .modal.open { display:flex; }
+  .modal-card { background:#14171b; border:1px solid #24272c; border-radius:12px;
+                padding:18px; max-width:460px; width:100%; }
+  .modal-card h3 { margin:0 0 6px; font-size:15px; }
+  .modal-card .meta { margin-bottom:12px; }
+  .replay-fields { display:flex; gap:12px; margin:12px 0; }
+  .replay-fields label { flex:1; display:flex; flex-direction:column; gap:6px;
+                         font-size:12px; color:#8b929a; }
+  .replay-fields input { font:inherit; background:#0f1216; color:#e9ecef; height:42px;
+                         border:1px solid #2c3037; border-radius:9px; padding:0 11px; }
+  .modal-actions { display:flex; gap:9px; justify-content:flex-end; margin-top:12px; }
 </style></head>
 <body>
 <header>
@@ -184,6 +212,24 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
 </header>
 <div id="app"><div class="center"><div class="spin"></div><div id="msg">${escapeHtml(t('remote.connecting'))}</div></div></div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="replay-modal">
+  <div class="modal-card">
+    <h3 id="replay-title"></h3>
+    <div class="meta" id="replay-memory"></div>
+    <div class="hint" id="replay-hint"></div>
+    <div class="replay-fields">
+      <label>${escapeHtml(t('remote.replayFrom'))}
+        <input type="number" id="replay-from" min="0" step="1" value="0"></label>
+      <label>${escapeHtml(t('remote.replayTo'))}
+        <input type="number" id="replay-to" min="0" step="1" value="0"></label>
+    </div>
+    <div class="modal-actions">
+      <button id="replay-whole" type="button"></button>
+      <button id="replay-cancel" type="button">${escapeHtml(t('action.cancel'))}</button>
+      <button class="primary" id="replay-go" type="button"></button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -686,6 +732,79 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     });
   }
 
+  // --- Replay a la demande -----------------------------------------------
+  //
+  // L'extrait est assemble par le poste, puis telecharge ici. Rien n'est ecrit
+  // sur le poste central : le fichier y est prepare dans un dossier temporaire,
+  // telecharge, puis supprime.
+  var replayTarget = null;
+
+  function openReplayModal(id, name) {
+    if (!state || !state.replay || !state.replay.enabled) { toast(L.replayDisabled, true); return; }
+    replayTarget = { id: id, name: name };
+    var memory = state.replay.bufferSeconds || 0;
+    document.getElementById('replay-title').textContent = L.replayTitle + (name ? ' - ' + name : '');
+    document.getElementById('replay-memory').textContent = L.replayMemory.replace('{seconds}', String(memory));
+    document.getElementById('replay-hint').textContent = L.replayHint;
+    document.getElementById('replay-whole').textContent = L.replayWhole;
+    document.getElementById('replay-go').textContent = L.replaySave;
+    document.getElementById('replay-from').value = String(memory);
+    document.getElementById('replay-to').value = '0';
+    document.getElementById('replay-modal').classList.add('open');
+  }
+
+  function closeReplayModal() {
+    replayTarget = null;
+    document.getElementById('replay-modal').classList.remove('open');
+  }
+
+  function submitReplay() {
+    if (!replayTarget) return;
+    var from = Number.parseInt(document.getElementById('replay-from').value, 10);
+    var to = Number.parseInt(document.getElementById('replay-to').value, 10);
+    if (!isFinite(from)) from = 0;
+    if (!isFinite(to)) to = 0;
+    var go = document.getElementById('replay-go');
+    go.disabled = true;
+    toast(L.replayBusy);
+    api('/remote/replay', {
+      method: 'POST',
+      body: JSON.stringify({ id: replayTarget.id, fromSeconds: from, toSeconds: to }),
+    })
+      .then(function (result) {
+        go.disabled = false;
+        if (!result || result.ok !== true || !result.url) {
+          toast((result && result.message) || L.replayFailed, true);
+          return;
+        }
+        closeReplayModal();
+        // On declenche le telechargement : le navigateur range le fichier dans
+        // son dossier Telechargements.
+        var a = document.createElement('a');
+        a.href = result.url;
+        a.download = safeName(replayTarget ? replayTarget.name : 'replay') + '.mp4';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast(L.replayDone);
+      })
+      .catch(function () {
+        go.disabled = false;
+        toast(L.replayFailed, true);
+      });
+  }
+
+  document.getElementById('replay-go').addEventListener('click', submitReplay);
+  document.getElementById('replay-cancel').addEventListener('click', closeReplayModal);
+  document.getElementById('replay-whole').addEventListener('click', function () {
+    var memory = (state && state.replay && state.replay.bufferSeconds) || 0;
+    document.getElementById('replay-from').value = String(memory);
+    document.getElementById('replay-to').value = '0';
+  });
+  document.getElementById('replay-modal').addEventListener('click', function (event) {
+    if (event.target === document.getElementById('replay-modal')) closeReplayModal();
+  });
+
   // --- Panneau principal -------------------------------------------------
   function load() {
     conn.className = 'dot on';
@@ -787,6 +906,10 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
       actions += '<button data-live>' + L.liveEdge + '</button>';
       actions += '<button data-full>' + L.fullscreen + '</button>';
     }
+    // Replay a la demande : l'extrait est telecharge sur cet appareil.
+    if (PERMISSIONS.download && playable && state && state.replay && state.replay.enabled) {
+      actions += '<button data-replay="' + esc(s.id) + '" data-name="' + esc(s.name) + '">' + L.replay + '</button>';
+    }
     if (PERMISSIONS.download && playable) {
       // Le debit de la source est transmis au MediaRecorder : il enregistre
       // alors au meme debit au lieu de re-encoder bien au-dela.
@@ -827,22 +950,33 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     var empty = container.querySelector('.muted');
     if (empty) empty.remove();
 
-    var seen = {};
+    // On construit les cartes dans l'ordre voulu, sans les deplacer quand elles
+    // sont deja a leur place. Deplacer un element en plein ecran (appendChild,
+    // insertBefore) fait sortir le navigateur du plein ecran : un simple
+    // rafraichissement toutes les 2 s faisait donc « sortir tout seul » du
+    // plein ecran. On ne deplace que ce qui a reellement change de position.
+    var desired = [];
     streams.forEach(function (s) {
-      seen[s.id] = true;
       var card = container.querySelector('.card[data-id="' + cssEscape(s.id) + '"]');
-      if (!card) {
-        container.appendChild(createCard(s));
-      } else {
-        syncCard(card, s);
-        // On replace la carte a sa position si l'ordre a change.
-        container.appendChild(card);
-      }
+      if (!card) card = createCard(s);
+      else syncCard(card, s);
+      desired.push(card);
     });
 
+    var reference = null;
+    for (var index = desired.length - 1; index >= 0; index -= 1) {
+      var node = desired[index];
+      if (node.parentNode !== container || node.nextElementSibling !== reference) {
+        container.insertBefore(node, reference);
+      }
+      reference = node;
+    }
+
     // Un flux disparu emporte sa carte, et sa lecture est arretee.
+    var keep = {};
+    desired.forEach(function (node) { keep[node.getAttribute('data-id')] = true; });
     container.querySelectorAll('.card[data-id]').forEach(function (card) {
-      if (!seen[card.getAttribute('data-id')]) {
+      if (!keep[card.getAttribute('data-id')]) {
         stopPlayback(card);
         card.remove();
       }
@@ -932,6 +1066,10 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     }
     if (button.hasAttribute('data-live')) { jumpToLive(card); return; }
     if (button.hasAttribute('data-full')) { toggleFullscreen(card); return; }
+    if (button.hasAttribute('data-replay')) {
+      openReplayModal(button.getAttribute('data-replay'), button.getAttribute('data-name'));
+      return;
+    }
     if (button.hasAttribute('data-dl')) {
       // Enregistrer suppose que l'image defile : si le flux n'est pas en
       // lecture, on la demarre, sinon la capture serait vide (image figee).

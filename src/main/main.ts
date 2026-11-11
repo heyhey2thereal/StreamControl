@@ -158,6 +158,11 @@ const webPages = new WebPagesServer({
   },
   remote,
   obs,
+  // Reglages du replay, pour le panneau distant.
+  getReplayConfig: () => {
+    const replay = settings.get().replay;
+    return { enabled: replay.enabled, bufferSeconds: replay.bufferSeconds, minimumSeconds: replay.minimumSeconds };
+  },
   // Actions du poste declenchables depuis le telephone. Elles passent par les
   // controleurs existants : le telephone ne fait que les declencher.
   remoteActions: {
@@ -170,6 +175,9 @@ const webPages = new WebPagesServer({
     runMacro: (id) => automation.runMacro(id, 'remote'),
     listMacros: () =>
       settings.get().macros.filter((macro) => !macro.disabled).map((macro) => ({ id: macro.id, name: macro.name })),
+    // Replay a la demande depuis un appareil : l'extrait est prepare dans un
+    // dossier temporaire, telecharge par l'appareil, puis supprime.
+    buildReplay: (id, options) => streams.buildReplay(id, options),
   },
 });
 

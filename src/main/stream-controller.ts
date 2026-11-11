@@ -25,7 +25,7 @@ import type {
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
 import { buildPathOptions, resolveRecordingDir } from './recording';
-import { replayPathOptions, saveReplay, replayState, type SaveReplayOptions } from './replay';
+import { replayPathOptions, saveReplay, buildReplay, replayState, type SaveReplayOptions, type ReplayBuild } from './replay';
 import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
@@ -454,6 +454,20 @@ export class StreamController extends EventEmitter {
     if (!endpoint) return { ok: false, message: 'Flux inconnu.' };
     const settings = this.settings.get();
     return saveReplay(settings, endpoint.path, endpoint.name, this.logger, options);
+  }
+
+  /**
+   * Prepare un replay pour un appareil du reseau (panneau distant).
+   *
+   * Le fichier est assemble dans un dossier temporaire, jamais dans le dossier
+   * des replays du poste : c'est l'appareil qui le telecharge, puis il est
+   * supprime. Rien n'est ecrit sur le poste central.
+   */
+  async buildReplay(id: string, options: SaveReplayOptions = {}): Promise<ReplayBuild> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return { ok: false, message: 'Flux inconnu.' };
+    const settings = this.settings.get();
+    return buildReplay(settings, endpoint.path, this.logger, options);
   }
 
   /** Etat du replay pour un flux : memoire disponible et pret ou non. */

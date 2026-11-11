@@ -808,6 +808,119 @@ test('la concatenation fMP4 cumule les temps et garde un seul en-tete', () => {
 });
 
 /**
+ * La duree d'un segment fMP4 se lit dans le `mdhd` et les `trun`.
+ *
+ * Le defaut corrige : le replay comptait les segments et multipliait par la
+ * duree demandee (2 s). Or MediaMTX aligne ses segments sur le GOP de la
+ * source, si bien qu'un segment dure rarement 2 s : un replay de 100 s n'en
+ * durait que 3. On verifie ici que la duree reelle est bien lue, base de temps
+ * comprise (le champ du `mdhd` suit deux dates dont la taille depend de la
+ * version).
+ */
+test('la duree d un segment fMP4 est lue depuis mdhd et trun', () => {
+  const { fmp4SegmentSeconds } = require('../dist-electron/main/fmp4.js');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  // tkhd version 0 : version+flags (4) + creation (4) + modification (4) + track_ID (4).
+  const tkhd = (trackId) => {
+    const body = Buffer.alloc(4 + 4 + 4 + 4);
+    body.writeUInt32BE(trackId, 12);
+    return box('tkhd', body);
+  };
+
+  // mdhd version 0 : version+flags (4) + creation (4) + modification (4) + timescale (4).
+  const mdhd = (timescale) => {
+    const body = Buffer.alloc(4 + 4 + 4 + 4 + 4 + 4);
+    body.writeUInt8(0, 0); // version 0
+    body.writeUInt32BE(timescale, 12);
+    return box('mdhd', body);
+  };
+
+  const trak = (trackId, timescale) => box('trak', Buffer.concat([tkhd(trackId), box('mdia', mdhd(timescale))]));
+
+  // tfhd : version+flags (default-base-is-moof) + track_ID.
+  const tfhd = (trackId) => {
+    const body = Buffer.alloc(8);
+    body.writeUInt32BE(0x020000, 0);
+    body.writeUInt32BE(trackId, 4);
+    return box('tfhd', body);
+  };
+
+  // trun version 0, flags 0x000300 : duree ET taille par image (comme MediaMTX).
+  const trun = (durations) => {
+    const body = Buffer.alloc(4 + 4 + 8 * durations.length);
+    body.writeUInt32BE(0x000300, 0);
+    body.writeUInt32BE(durations.length, 4);
+    durations.forEach((duration, index) => {
+      body.writeUInt32BE(duration, 8 + index * 8);
+      body.writeUInt32BE(100, 12 + index * 8); // sample_size
+    });
+    return box('trun', body);
+  };
+
+  const traf = (trackId, durations) => box('traf', Buffer.concat([tfhd(trackId), trun(durations)]));
+  const moof = (...trafs) => box('moof', Buffer.concat([box('mfhd', Buffer.alloc(8)), ...trafs]));
+  const mdat = () => box('mdat', Buffer.alloc(16, 0));
+
+  // Un segment video seul, DEUX fragments de 1 s : la duree doit etre 2 s.
+  // (MediaMTX ecrit plusieurs fragments par segment ; n'en lire qu'un donnait
+  // la moitie de la duree reelle.)
+  const videoOnly = Buffer.concat([
+    box('ftyp', Buffer.alloc(8, 0)),
+    box('moov', trak(1, 1000)),
+    moof(traf(1, [500, 500])), mdat(),
+    moof(traf(1, [500, 500])), mdat(),
+  ]);
+  assert.ok(Math.abs(fmp4SegmentSeconds(videoOnly) - 2) < 1e-6, `2 s attendues, obtenue ${fmp4SegmentSeconds(videoOnly)}`);
+
+  // Deux pistes, bases de temps differentes (video 90000, audio 48000), de
+  // meme duree : le segment dure 1 s, pas la somme des deux.
+  const twoTracks = Buffer.concat([
+    box('ftyp', Buffer.alloc(8, 0)),
+    box('moov', Buffer.concat([trak(1, 90000), trak(2, 48000)])),
+    moof(traf(1, [45000, 45000]), traf(2, [48000])), mdat(),
+  ]);
+  const measured = fmp4SegmentSeconds(twoTracks);
+  assert.ok(Math.abs(measured - 1) < 1e-6, `1 s attendue, obtenue ${measured}`);
+
+  // Un segment sans moov (fichier tronque) ne doit pas inventer de duree.
+  assert.equal(fmp4SegmentSeconds(Buffer.alloc(32, 0)), 0);
+});
+
+/**
+ * La selection d'une plage de replay s'appuie sur la duree reelle des segments.
+ *
+ * On verifie qu'une plage « des 30 dernieres secondes » retient bien les
+ * segments qui couvrent cette fenetre, et non un nombre fixe de segments.
+ */
+test('la selection de replay retient les segments de la plage', () => {
+  const { selectSegments } = require('../dist-electron/main/replay.js');
+
+  // Cinq segments de 3 s chacun : 15 s au total.
+  const segments = [0, 1, 2, 3, 4].map((index) => ({ file: `s${index}.mp4`, seconds: 3 }));
+
+  // Les 6 dernieres secondes = les deux derniers segments.
+  const last = selectSegments(segments, 6, 0);
+  assert.deepEqual(last.map((s) => s.file), ['s3.mp4', 's4.mp4']);
+
+  // Toute la memoire.
+  const all = selectSegments(segments, 15, 0);
+  assert.equal(all.length, 5);
+
+  // Une fenetre au milieu : de 12 s en arriere a 6 s en arriere, soit 6 s
+  // de contenu = deux segments.
+  const middle = selectSegments(segments, 12, 6);
+  assert.deepEqual(middle.map((s) => s.file), ['s1.mp4', 's2.mp4']);
+});
+
+/**
  * La plage d'un replay est bornee par la memoire et le minimum configures.
  *
  * On verifie la logique de selection sans toucher au disque : les fonctions

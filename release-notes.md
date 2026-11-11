@@ -52,7 +52,26 @@ Disponible sur **Windows**, **macOS** et **Linux**.
   qu'en secours. Le bouton « Retour au direct » rattrape réellement le retard.
 
 - **Plein écran du panneau distant.** Nouveau bouton par flux : l'image passe
-  en plein écran, avec ses commandes.
+  en plein écran, avec ses commandes. Le plein écran ne « sortait » plus tout
+  seul : la grille ne déplace plus une carte dont la position n'a pas changé.
+
+- **Durée réelle des replays.** Un replay de 100 s n'en durait que 3 : le
+  calcul comptait les segments en supposant qu'ils durent 2 s, alors que
+  MediaMTX les aligne sur le GOP de la source. La durée est désormais lue dans
+  les segments eux-mêmes. La durée annoncée correspond à la durée du fichier.
+
+- **Replays rangés par flux.** Les replays sont écrits dans un sous-dossier
+  portant le nom du flux, sous le dossier des replays.
+
+---
+
+## Replay depuis un appareil
+
+Le panneau distant (vue ordinateur) permet désormais d'**extraire un replay** :
+choisissez le début et la fin de l'extrait, en secondes en arrière, et le
+fichier **MP4 est téléchargé sur l'appareil**. L'extrait est assemblé sur le
+poste puis supprimé : rien ne s'écrit dans le dossier des replays du poste. Il
+faut l'autorisation « Enregistrer la lecture dans le navigateur ».
 
 ---
 
@@ -67,15 +86,16 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 ### Modifiés
 | Fichier | Changement |
 |---|---|
-| `src/main/replay.ts` | Plage de replay, dossier de sortie, minimum, mémoire, MP4 |
-| `src/main/stream-controller.ts` | `saveReplay` avec plage, `replayState` |
+| `src/main/replay.ts` | Durée réelle des segments, sous-dossier par flux, `planReplay`, `buildReplay` |
+| `src/main/fmp4.ts` | `fmp4SegmentSeconds` : durée réelle d'un segment (mdhd + trun) |
+| `src/main/stream-controller.ts` | `saveReplay` avec plage, `replayState`, `buildReplay` |
 | `src/main/ipc.ts` | Canaux replay (plage, état, dossier), autorisations de scène |
 | `src/main/settings.ts` | Réglages replay (mémoire, minimum, dossier), scène (écran « pas de flux ») |
 | `src/main/obs-controller.ts` | Paramètre unique par source, rechargement, résolution par cellule, activation par flux |
 | `src/main/player-page.ts` | Écran « pas de flux » (noir / message personnalisé) |
-| `src/main/web-pages.ts` | Écran « pas de flux » ; URL WebRTC/WHEP dans l'état distant |
-| `src/main/main.ts` | Résolution des variables du message |
-| `src/main/remote-desktop-page.ts` | Lecture WebRTC d'abord, correction de latence, retour au direct, plein écran, débit d'enregistrement |
+| `src/main/web-pages.ts` | Écran « pas de flux » ; URL WebRTC/WHEP ; routes replay du panneau distant |
+| `src/main/main.ts` | Résolution des variables du message ; réglages et action replay du panneau distant |
+| `src/main/remote-desktop-page.ts` | Lecture WebRTC d'abord, correction de latence, retour au direct, plein écran stable, réglage du débit, modale de replay |
 | `src/main/remote-page.ts` | Retour au direct, débit d'enregistrement |
 | `src/shared/types.ts` | `SceneDisplaySettings`, `ReplayResult`, `ReplayState` |
 | `src/shared/channels.ts` | Canaux replay |
@@ -85,9 +105,9 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 | `src/renderer/views/SettingsView.tsx` | Réglages replay et écran « pas de flux » |
 | `src/renderer/views/ObsView.tsx` | Boutons Affiché / Noir, aperçu des cellules noires |
 | `src/renderer/styles/global.css` | Styles replay, boutons Affiché / Noir |
-| `tests/e2e/replay.mjs`, `obs.mjs`, `player.mjs`, `app-smoke.mjs` | Couverture |
+| `tests/e2e/replay.mjs`, `obs.mjs`, `player.mjs`, `remote.mjs`, `app-smoke.mjs` | Couverture |
 | `tests/obs-ws-server.mjs` | Suivi de `SetSceneItemEnabled` |
-| `tests/logic.test.mjs` | Réglages de replay bornés |
+| `tests/logic.test.mjs` | Durée réelle d'un segment fMP4, sélection d'une plage de replay, réglages bornés |
 | `package.json` | Version 2.0.2 |
 
 ---
