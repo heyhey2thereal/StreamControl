@@ -180,7 +180,39 @@ export function selectSegments(
 /** Duree disponible dans le tampon, d'apres la duree reelle des segments. */
 export async function bufferSeconds(configured: string, streamPath: string): Promise<number> {
   const segments = await segmentDurations(configured, streamPath);
-  return segments.reduce((sum, segment) => sum + segment.seconds, 0);
+  const total = segments.reduce((sum, segment) => sum + segment.seconds, 0);
+  // Arrondi : la somme de durees flottantes donne sinon des valeurs du genre
+  // 962.9999999999 s, que l'interface affiche telles quelles.
+  return Math.round(total);
+}
+
+/**
+ * Vide le tampon d'un flux.
+ *
+ * Le tampon est une fenetre glissante : MediaMTX purge normalement les
+ * segments trop vieux. Mais apres une reinstallation ou un arret brutal, des
+ * segments d'une session precedente peuvent subsister et gonfler la duree
+ * annoncee. Ce bouton repart de zero, sans toucher aux enregistrements.
+ *
+ * @returns le nombre de segments supprimes.
+ */
+export async function clearReplayBuffer(configured: string, streamPath: string): Promise<number> {
+  const dir = path.join(replayBufferDir(configured), streamPath);
+  let removed = 0;
+  try {
+    for (const name of await fs.readdir(dir)) {
+      if (!name.endsWith('.mp4') && !name.endsWith('.ts')) continue;
+      try {
+        await fs.rm(path.join(dir, name), { force: true });
+        removed += 1;
+      } catch {
+        // Segment en cours d'ecriture par MediaMTX : il sera purge plus tard.
+      }
+    }
+  } catch {
+    // Dossier absent : rien a vider.
+  }
+  return removed;
 }
 
 /**

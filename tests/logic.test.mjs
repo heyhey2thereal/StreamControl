@@ -808,6 +808,110 @@ test('la concatenation fMP4 cumule les temps et garde un seul en-tete', () => {
 });
 
 /**
+ * L'en-tete du fichier assemble annonce la duree TOTALE, pas celle d'un segment.
+ *
+ * Le defaut corrige : chaque segment de MediaMTX porte un en-tete dont les
+ * durees decrivent ce seul segment (`mvhd` = quelques secondes, `tkhd` et `mdhd`
+ * a zero). Un fichier obtenu par mise bout a bout gardait cet en-tete, et le
+ * lecteur affichait « 0:00 » comme duree, alors que la lecture continuait.
+ */
+test('l en-tete assemble annonce la duree totale', () => {
+  const { concatFragmentedMp4 } = require('../dist-electron/main/fmp4.js');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  // tkhd version 0 : version+flags (4) + dates (8) + track_ID (4) + reserved (4) + duration (4).
+  const tkhd = (trackId, duration) => {
+    const body = Buffer.alloc(4 + 8 + 4 + 4 + 4);
+    body.writeUInt32BE(trackId, 12);
+    body.writeUInt32BE(duration, 20);
+    return box('tkhd', body);
+  };
+  // mdhd version 0 : version+flags (4) + dates (8) + timescale (4) + duration (4).
+  const mdhd = (timescale, duration) => {
+    const body = Buffer.alloc(4 + 8 + 4 + 4);
+    body.writeUInt32BE(timescale, 12);
+    body.writeUInt32BE(duration, 16);
+    return box('mdhd', body);
+  };
+  // mvhd version 0 : version+flags (4) + dates (8) + timescale (4) + duration (4).
+  const mvhd = (timescale, duration) => {
+    const body = Buffer.alloc(4 + 8 + 4 + 4);
+    body.writeUInt32BE(timescale, 12);
+    body.writeUInt32BE(duration, 16);
+    return box('mvhd', body);
+  };
+
+  const trak = box('trak', Buffer.concat([
+    tkhd(1, 0),
+    box('mdia', mdhd(90000, 0)),
+  ]));
+  // En-tete d'un segment : durees decrivant UN segment (2 s), tkhd et mdhd a zero.
+  const moov = box('moov', Buffer.concat([mvhd(1000, 2000), trak]));
+
+  // Un fragment : traf (tfhd track 1 + trun de 2 images de 45000 unites = 1 s).
+  const tfhd = box('tfhd', Buffer.from([2, 0, 0, 0, 0, 0, 0, 1]));
+  const trunBody = Buffer.alloc(4 + 4 + 2 * 8);
+  trunBody.writeUInt32BE(0x000300, 0);
+  trunBody.writeUInt32BE(2, 4);
+  trunBody.writeUInt32BE(45000, 8);
+  trunBody.writeUInt32BE(100, 12);
+  trunBody.writeUInt32BE(45000, 16);
+  trunBody.writeUInt32BE(100, 20);
+  const traf = box('traf', Buffer.concat([tfhd, box('trun', trunBody)]));
+  const moof = box('moof', Buffer.concat([box('mfhd', Buffer.alloc(8)), traf]));
+  const segment = () => Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), moov, moof, box('mdat', Buffer.alloc(16))]);
+
+  // Trois segments d'une seconde chacun : le fichier dure 3 s.
+  const merged = concatFragmentedMp4([segment(), segment(), segment()]);
+  assert.ok(merged, 'la concatenation doit produire un fichier');
+
+  // Lecture des durees dans l'en-tete du fichier assemble.
+  const readBox = (buffer, start, end) => {
+    const boxes = [];
+    let offset = start;
+    while (offset + 8 <= end) {
+      const size = buffer.readUInt32BE(offset);
+      const type = buffer.toString('latin1', offset + 4, offset + 8);
+      if (size < 8 || offset + size > end) break;
+      boxes.push({ type, start: offset, size });
+      offset += size;
+    }
+    return boxes;
+  };
+  const top = readBox(merged, 0, merged.length);
+  const moovBox = top.find((entry) => entry.type === 'moov');
+  assert.ok(moovBox, 'un moov est present');
+  const children = readBox(merged, moovBox.start + 8, moovBox.start + moovBox.size);
+
+  const mvhdBox = children.find((entry) => entry.type === 'mvhd');
+  // mvhd : version+flags (4) + dates (8) + timescale (4) + duration (4).
+  const movieTimescale = merged.readUInt32BE(mvhdBox.start + 8 + 12);
+  const movieDuration = merged.readUInt32BE(mvhdBox.start + 8 + 16);
+  assert.equal(movieDuration / movieTimescale, 3, 'duree du film = 3 s');
+
+  const trakBox = children.find((entry) => entry.type === 'trak');
+  const trakChildren = readBox(merged, trakBox.start + 8, trakBox.start + trakBox.size);
+  const tkhdBox = trakChildren.find((entry) => entry.type === 'tkhd');
+  // tkhd : version+flags (4) + dates (8) + track_ID (4) + reserved (4) -> duration.
+  const trackDuration = merged.readUInt32BE(tkhdBox.start + 8 + 20);
+  assert.equal(trackDuration / movieTimescale, 3, 'duree de la piste = 3 s (et non 0)');
+
+  const mdiaBox = trakChildren.find((entry) => entry.type === 'mdia');
+  const mdhdBox = readBox(merged, mdiaBox.start + 8, mdiaBox.start + mdiaBox.size).find((e) => e.type === 'mdhd');
+  // mdhd : version+flags (4) + dates (8) + timescale (4) + duration (4).
+  const mediaTimescale = merged.readUInt32BE(mdhdBox.start + 8 + 12);
+  const mediaDuration = merged.readUInt32BE(mdhdBox.start + 8 + 16);
+  assert.equal(mediaDuration / mediaTimescale, 3, 'duree du media = 3 s (et non 0)');
+});
+
+/**
  * La duree d'un segment fMP4 se lit dans le `mdhd` et les `trun`.
  *
  * Le defaut corrige : le replay comptait les segments et multipliait par la

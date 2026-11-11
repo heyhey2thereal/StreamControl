@@ -195,6 +195,8 @@ const api: StreamControlApi = {
     ipcRenderer.invoke(CHANNELS.replayAvailable, id) as Promise<{ seconds: number }>,
   replayOpenFolder: () => ipcRenderer.invoke(CHANNELS.replayOpenFolder) as Promise<GatherResult>,
   replayPickDir: () => ipcRenderer.invoke(CHANNELS.replayPickDir) as Promise<string | null>,
+  replayClearBuffer: (id) =>
+    ipcRenderer.invoke(CHANNELS.replayClearBuffer, id) as Promise<{ removed: number }>,
 
   storageList: () => ipcRenderer.invoke(CHANNELS.storageList) as Promise<StorageEntry[]>,
   storagePickDir: () => ipcRenderer.invoke(CHANNELS.storagePickDir) as Promise<string | null>,

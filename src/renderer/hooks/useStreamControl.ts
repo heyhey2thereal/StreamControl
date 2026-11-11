@@ -836,6 +836,26 @@ export function useStreamControl() {
   }, [api, notify, tr]);
 
   /**
+   * Vide le tampon de replay d'un flux : la duree disponible repart de zero.
+   *
+   * Sans cela, des segments d'une session precedente (apres une reinstallation,
+   * par exemple) gonflent la duree annoncee, parfois au-dela de la memoire
+   * configuree.
+   */
+  const clearReplayBuffer = useCallback(
+    async (id: string): Promise<number> => {
+      try {
+        const result = await api.replayClearBuffer(id);
+        return result.removed;
+      } catch (error) {
+        notify('err', error instanceof Error ? error.message : String(error));
+        return 0;
+      }
+    },
+    [api, notify],
+  );
+
+  /**
    * Sauvegarde une plage du replay d'un flux.
    *
    * @param options plage voulue, comptee depuis la fin du flux (0 = derniere
@@ -983,6 +1003,7 @@ export function useStreamControl() {
       openStorage,
       openRecording,
       openReplayFolder,
+      clearReplayBuffer,
       saveReplayRange,
       saveReplayLatest,
       saveReplayFor,
@@ -1040,6 +1061,7 @@ export function useStreamControl() {
       openStorage,
       openRecording,
       openReplayFolder,
+      clearReplayBuffer,
       saveReplayRange,
       saveReplayLatest,
       saveReplayFor,

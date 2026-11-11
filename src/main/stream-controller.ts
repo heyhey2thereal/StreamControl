@@ -25,7 +25,7 @@ import type {
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
 import { buildPathOptions, resolveRecordingDir } from './recording';
-import { replayPathOptions, saveReplay, buildReplay, replayState, type SaveReplayOptions, type ReplayBuild } from './replay';
+import { replayPathOptions, saveReplay, buildReplay, replayState, clearReplayBuffer, type SaveReplayOptions, type ReplayBuild } from './replay';
 import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
@@ -481,6 +481,18 @@ export class StreamController extends EventEmitter {
   /** Duree de replay disponible pour un flux, en secondes. */
   async replayAvailable(id: string): Promise<number> {
     return (await this.replayState(id)).availableSeconds;
+  }
+
+  /** Vide le tampon de replay d'un flux : la duree disponible repart de zero. */
+  async clearReplayBuffer(id: string): Promise<{ removed: number }> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return { removed: 0 };
+    const settings = this.settings.get();
+    const removed = await clearReplayBuffer(settings.replay.path, endpoint.path);
+    if (removed > 0) {
+      this.logger.info('replay', `Tampon vide pour /${endpoint.path} : ${removed} segment(s).`);
+    }
+    return { removed };
   }
 
   status(id: string): StreamStatus {

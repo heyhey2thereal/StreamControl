@@ -457,6 +457,7 @@ export function registerIpcHandlers(context: IpcContext): void {
   handle<{ seconds: number }>(CHANNELS.replayAvailable, async (id: string) => ({
     seconds: await streams.replayAvailable(String(id)),
   }));
+  handle<{ removed: number }>(CHANNELS.replayClearBuffer, async (id: string) => streams.clearReplayBuffer(String(id)));
   handle<GatherResult>(CHANNELS.replayOpenFolder, async () => {
     // Le dossier des replays est configurable : on ouvre celui qui est
     // reellement utilise, en le creant au besoin.

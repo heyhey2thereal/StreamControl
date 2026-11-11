@@ -36,7 +36,8 @@ export type IconName =
   | 'lockOpen'
   | 'search'
   | 'check'
-  | 'close';
+  | 'close'
+  | 'trash';
 
 /** Trace de chaque icone, sans l'enveloppe SVG. */
 const PATHS: Record<IconName, string> = {
@@ -66,6 +67,7 @@ const PATHS: Record<IconName, string> = {
   search: 'M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4',
   check: 'M5 13l4 4L19 7',
   close: 'M6 6l12 12M18 6L6 18',
+  trash: 'M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13M10 11v6M14 11v6',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

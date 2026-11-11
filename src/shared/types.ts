@@ -1182,6 +1182,13 @@ export interface StreamControlApi {
   replayOpenFolder(): Promise<GatherResult>;
   /** Choisit le dossier de sortie des replays. */
   replayPickDir(): Promise<string | null>;
+  /**
+   * Vide le tampon de replay d'un flux : la duree disponible repart de zero.
+   *
+   * Utile apres une reinstallation, quand des segments d'une session
+   * precedente subsistent et gonflent la duree annoncee.
+   */
+  replayClearBuffer(id: string): Promise<{ removed: number }>;
 
   // --- Fichiers de l'application -------------------------------------------
   storageList(): Promise<StorageEntry[]>;

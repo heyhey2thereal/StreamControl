@@ -20,7 +20,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from './logger';
 import { listBufferSegments, replayBufferDir, replayOutputDir } from './replay';
-import { createFmp4Writer, fmp4Append, type Fmp4WriterState } from './fmp4';
+import { createFmp4Writer, fmp4Append, fmp4Finalize, type Fmp4WriterState } from './fmp4';
 
 /** Intervalle de surveillance du tampon, en millisecondes. */
 const POLL_MS = 1000;
@@ -137,6 +137,12 @@ export class CaptureManager extends EventEmitter {
     // publie encore, donc MediaMTX est en train de l'ecrire. Le lire donnerait
     // un fichier corrompu. On perd au plus un segment (2 s), jamais l'integrite.
     await this.drain(capture);
+    // La duree totale n'est connue qu'ici : on corrige l'en-tete deja ecrit,
+    // sinon le lecteur annonce « 0:00 » comme duree du fichier.
+    if (capture.handle && capture.writer.initMoov) {
+      fmp4Finalize(capture.writer);
+      await capture.handle.write(capture.writer.initMoov, 0, capture.writer.initMoov.length, capture.writer.initOffset);
+    }
     await capture.handle?.close();
     capture.handle = null;
     this.captures.delete(streamId);

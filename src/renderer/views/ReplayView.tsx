@@ -66,10 +66,13 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
 
   const selected: StreamEndpointView | undefined = streams.find((stream) => stream.id === selectedId);
   const selectedState = selectedId ? states[selectedId] : undefined;
-  const available = selectedState?.availableSeconds ?? 0;
+  // La barre represente la memoire configuree : c'est la duree maximale d'un
+  // replay. On borne la duree disponible a cette valeur : un tampon residuel
+  // (apres une reinstallation) peut annoncer plus que la memoire, ce qui
+  // remplirait la barre au-dela de 100 %.
+  const available = Math.min(selectedState?.availableSeconds ?? 0, memory);
 
-  // La barre represente la memoire pleine (0 a `memory`). Le remplissage reel
-  // est la partie deja memorisee : elle grandit tant que le flux publie.
+  // Le remplissage reel grandit tant que le flux publie.
   const pct = (seconds: number) => `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
   // Position d'une seconde "en arriere" sur la barre : 0 (direct) est a DROITE.
   const startLeft = `${Math.min(100, Math.max(0, ((memory - startAgo) / memory) * 100))}%`;
@@ -122,6 +125,22 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
 
   const canSave = enabled && Boolean(selected) && wanted >= minimum && available >= minimum && !busy;
 
+  /**
+   * Vide le tampon du flux selectionne, apres confirmation.
+   *
+   * Repart de zero : les segments residuels d'une session precedente ne
+   * gonflent plus la duree annoncee.
+   */
+  const clearBuffer = async () => {
+    if (!selected) return;
+    if (!window.confirm(t('replay.confirmClear', { name: selected.name }))) return;
+    await sc.clearReplayBuffer(selected.id);
+    sc.notify('ok', t('replay.bufferCleared'));
+    setStartAgo(Math.min(memory, 30));
+    setEndAgo(0);
+    await refresh();
+  };
+
   return (
     <div className="content">
       <div className="topbar" style={{ margin: '-20px -22px 20px', padding: '15px 22px' }}>
@@ -134,6 +153,14 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
             <span className={`led ${enabled ? 'running' : ''}`} aria-hidden />
             {enabled ? t('state.running') : t('state.stopped')}
           </span>
+          <button
+            type="button"
+            className="btn small ghost"
+            disabled={!selected}
+            onClick={() => void clearBuffer()}
+          >
+            <Icon name="trash" size={14} /> {t('replay.clearBuffer')}
+          </button>
           <button type="button" className="btn small ghost" onClick={() => void sc.openReplayFolder()}>
             <Icon name="files" size={14} /> {t('replay.openFolder')}
           </button>
@@ -149,121 +176,118 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
         </div>
       ) : null}
 
-      <div className="replay-layout">
-        {/* --- Choix du flux ------------------------------------------- */}
-        <div className="panel">
-          <div className="panel-head">
-            <h2 className="panel-title">{t('replay.pickStream')}</h2>
+      <div className="panel">
+        <div className="panel-head">
+          <h2 className="panel-title">{t('replay.pickStream')}</h2>
+        </div>
+        {streams.length === 0 ? (
+          <p className="muted">{t('replay.noStream')}</p>
+        ) : (
+          <div className="pick-list">
+            {streams.map((stream) => {
+              const state = states[stream.id];
+              const ready = state?.ready ?? false;
+              return (
+                <button
+                  key={stream.id}
+                  type="button"
+                  className={`pick-item replay-pick${selectedId === stream.id ? ' selected' : ''}`}
+                  onClick={() => setSelectedId(stream.id)}
+                >
+                  <span className="pick-name">{stream.name}</span>
+                  <span className="pick-path">/{stream.path}</span>
+                  <span className={`led ${stream.status.publishing ? 'running' : ''}`} aria-hidden />
+                  <span className={`badge ${ready ? 'ok' : ''}`}>
+                    {state ? `${state.availableSeconds} s` : '--'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          {streams.length === 0 ? (
-            <p className="muted">{t('replay.noStream')}</p>
-          ) : (
-            <div className="pick-list">
-              {streams.map((stream) => {
-                const state = states[stream.id];
-                const ready = state?.ready ?? false;
-                return (
-                  <button
-                    key={stream.id}
-                    type="button"
-                    className={`pick-item replay-pick${selectedId === stream.id ? ' selected' : ''}`}
-                    onClick={() => setSelectedId(stream.id)}
-                  >
-                    <span className="pick-name">{stream.name}</span>
-                    <span className="pick-path">/{stream.path}</span>
-                    <span className={`led ${stream.status.publishing ? 'running' : ''}`} aria-hidden />
-                    <span className={`badge ${ready ? 'ok' : ''}`}>
-                      {state ? `${state.availableSeconds} s` : '--'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+        )}
+      </div>
+
+      {/* --- Barre de lecture : toute la largeur --------------------------- */}
+      <div className="panel">
+        <div className="panel-head">
+          <h2 className="panel-title">{t('replay.timelineTitle')}</h2>
         </div>
 
-        {/* --- Barre de lecture --------------------------------------- */}
-        <div className="panel">
-          <div className="panel-head">
-            <h2 className="panel-title">{t('replay.timelineTitle')}</h2>
+        <div className="hint">{t('replay.timelineHint', { memory })}</div>
+
+        <div className="replay-timeline">
+          {/* Graduations : la memoire a gauche, le direct a droite. */}
+          <div className="replay-axis">
+            <span>{t('replay.axisOldest', { seconds: memory })}</span>
+            <span className="replay-live-tag">{t('replay.axisLive')}</span>
           </div>
 
-          <div className="hint">{t('replay.timelineHint', { memory })}</div>
-
-          <div className="replay-timeline">
-            {/* Graduations : la memoire a gauche, le direct a droite. */}
-            <div className="replay-axis">
-              <span>{t('replay.axisOldest', { seconds: memory })}</span>
-              <span className="replay-live-tag">{t('replay.axisLive')}</span>
-            </div>
-
-            <div className="replay-bar" ref={barRef}>
-              {/* Partie reellement memorisee : elle grandit avec le direct. */}
-              <div className="replay-bar-fill" style={{ width: pct(available) }} />
-              {/* Selection entre les deux poignees. */}
-              <div
-                className="replay-bar-select"
-                style={{ left: startLeft, right: `calc(100% - ${endLeft})` }}
-              />
-              {/* Poignee de debut (a gauche). */}
-              <button
-                type="button"
-                className="replay-handle"
-                style={{ left: startLeft }}
-                aria-label={t('replay.handleStart')}
-                onPointerDown={(event) => { dragging.current = 'start'; event.preventDefault(); }}
-              >
-                <span className="replay-handle-label">{startAgo}s</span>
-              </button>
-              {/* Poignee de fin (a droite). */}
-              <button
-                type="button"
-                className="replay-handle"
-                style={{ left: endLeft }}
-                aria-label={t('replay.handleEnd')}
-                onPointerDown={(event) => { dragging.current = 'end'; event.preventDefault(); }}
-              >
-                <span className="replay-handle-label">{endAgo}s</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="replay-summary">
-            <span>{t('replay.wanted', { seconds: wanted })}</span>
-            <span className={`badge ${wanted >= minimum ? 'ok' : 'err'}`}>
-              {wanted >= minimum ? t('replay.wantedOk') : t('replay.wantedTooShort', { minimum })}
-            </span>
-          </div>
-
-          {selected && !selectedState?.ready ? (
-            <div className="hint" style={{ marginTop: 8 }}>
-              {t('replay.notReady', { seconds: available, minimum })}
-            </div>
-          ) : null}
-
-          <div className="btn-row" style={{ marginTop: 14 }}>
-            <button type="button" className="btn primary" disabled={!canSave} onClick={() => void save()}>
-              {busy ? <Spinner size={14} /> : null}
-              {busy ? t('replay.saving') : t('replay.save')}
-            </button>
+          <div className="replay-bar" ref={barRef}>
+            {/* Partie reellement memorisee : elle grandit avec le direct. */}
+            <div className="replay-bar-fill" style={{ width: pct(available) }} />
+            {/* Selection entre les deux poignees. */}
+            <div
+              className="replay-bar-select"
+              style={{ left: startLeft, right: `calc(100% - ${endLeft})` }}
+            />
+            {/* Poignee de debut (a gauche). */}
             <button
               type="button"
-              className="btn ghost"
-              onClick={() => { setStartAgo(Math.min(memory, available || memory)); setEndAgo(0); }}
+              className="replay-handle"
+              style={{ left: startLeft }}
+              aria-label={t('replay.handleStart')}
+              onPointerDown={(event) => { dragging.current = 'start'; event.preventDefault(); }}
             >
-              {t('replay.wholeMemory')}
+              <span className="replay-handle-label">{startAgo}s</span>
+            </button>
+            {/* Poignee de fin (a droite). */}
+            <button
+              type="button"
+              className="replay-handle"
+              style={{ left: endLeft }}
+              aria-label={t('replay.handleEnd')}
+              onPointerDown={(event) => { dragging.current = 'end'; event.preventDefault(); }}
+            >
+              <span className="replay-handle-label">{endAgo}s</span>
             </button>
           </div>
-
-          {message ? (
-            <div className={`alert ${savedFile ? '' : 'warn'}`} style={{ marginTop: 12, marginBottom: 0 }}>
-              <div>
-                {message}
-                {savedFile ? <div className="mono" style={{ marginTop: 6, fontSize: 11 }}>{savedFile}</div> : null}
-              </div>
-            </div>
-          ) : null}
         </div>
+
+        <div className="replay-summary">
+          <span>{t('replay.wanted', { seconds: wanted })}</span>
+          <span className={`badge ${wanted >= minimum ? 'ok' : 'err'}`}>
+            {wanted >= minimum ? t('replay.wantedOk') : t('replay.wantedTooShort', { minimum })}
+          </span>
+        </div>
+
+        {selected && !selectedState?.ready ? (
+          <div className="hint" style={{ marginTop: 8 }}>
+            {t('replay.notReady', { seconds: available, minimum })}
+          </div>
+        ) : null}
+
+        <div className="btn-row" style={{ marginTop: 14 }}>
+          <button type="button" className="btn primary" disabled={!canSave} onClick={() => void save()}>
+            {busy ? <Spinner size={14} /> : null}
+            {busy ? t('replay.saving') : t('replay.save')}
+          </button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => { setStartAgo(Math.min(memory, available || memory)); setEndAgo(0); }}
+          >
+            {t('replay.wholeMemory')}
+          </button>
+        </div>
+
+        {message ? (
+          <div className={`alert ${savedFile ? '' : 'warn'}`} style={{ marginTop: 12, marginBottom: 0 }}>
+            <div>
+              {message}
+              {savedFile ? <div className="mono" style={{ marginTop: 6, fontSize: 11 }}>{savedFile}</div> : null}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="panel">

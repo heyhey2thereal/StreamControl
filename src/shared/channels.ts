@@ -121,6 +121,8 @@ export const CHANNELS = {
   replayOpenFolder: 'replay:open-folder',
   /** Choisit le dossier de sortie des replays. */
   replayPickDir: 'replay:pick-dir',
+  /** Vide le tampon de replay d'un flux (repart de zero). */
+  replayClearBuffer: 'replay:clear-buffer',
 
   // --- Rangement des fichiers ---------------------------------------------
   storageList: 'storage:list',

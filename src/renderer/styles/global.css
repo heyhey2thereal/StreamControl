@@ -3302,20 +3302,8 @@ input[type='range'].input {
 }
 
 /* --- Replay : choix du flux et de la plage ----------------------------- */
-.replay-layout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  align-items: start;
-}
-
-@media (max-width: 980px) {
-  .replay-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* La liste des flux du replay est un simple choix : un bouton par ligne. */
+/* La barre de lecture occupe toute la largeur : c'est elle qui donne la
+   duree de l'extrait, elle doit rester lisible meme avec 500 s de memoire. */
 .replay-pick {
   display: flex;
   align-items: center;

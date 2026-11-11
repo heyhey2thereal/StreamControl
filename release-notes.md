@@ -60,6 +60,21 @@ Disponible sur **Windows**, **macOS** et **Linux**.
   MediaMTX les aligne sur le GOP de la source. La durée est désormais lue dans
   les segments eux-mêmes. La durée annoncée correspond à la durée du fichier.
 
+- **Durée « 0:00 » dans le lecteur.** Le fichier de replay se lisait, mais le
+  lecteur affichait 0:00 comme durée. L'en-tête du fichier gardait la durée d'un
+  seul segment (la piste annonçait zéro) : il est maintenant réécrit avec la
+  durée totale.
+
+- **Mémoire du replay : vider et arrondir.** Un bouton **Vider la mémoire**
+  efface le tampon d'un flux (utile après une réinstallation, où des segments
+  anciens gonflent la durée annoncée, parfois au-delà de la mémoire réglée). La
+  durée disponible est arrondie et bornée à la mémoire configurée : la barre ne
+  dépasse plus 100 %.
+
+- **Barre de lecture en pleine largeur.** La barre du replay occupe toute la
+  largeur, sous la liste des flux : elle reste lisible même avec 500 s de
+  mémoire.
+
 - **Replays rangés par flux.** Les replays sont écrits dans un sous-dossier
   portant le nom du flux, sous le dossier des replays.
 

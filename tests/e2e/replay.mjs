@@ -150,6 +150,12 @@ try {
     );
   });
   check('le MP4 sauvegarde est lisible', /duration=\d/.test(probe), probe.trim());
+  // La duree annoncee doit correspondre a la plage demandee (30 s demandees,
+  // mais bornee par la memoire de 40 s et la disponibilite reelle). Le defaut
+  // corrige : l'en-tete gardait la duree d'un seul segment, et le lecteur
+  // affichait « 0:00 » alors que la lecture continuait.
+  const announced = Number((probe.match(/duration=([\d.]+)/) || [])[1] || 0);
+  check('la duree annoncee correspond au fichier', announced >= 5, `${announced} s annoncees`);
 
   // --- Onglet Replay : barre de lecture a deux poignees ------------------
   console.log('\n--- onglet Replay ---');
@@ -231,6 +237,23 @@ try {
     body: JSON.stringify({ id: target.id, fromSeconds: 10, toSeconds: 0 }),
   });
   check('le replay est refuse sans autorisation', denied.status === 403, `HTTP ${denied.status}`);
+
+  // --- Vider la memoire du replay (en dernier : elle vide le tampon) ------
+  // Le bouton repart de zero : apres effacement, la duree disponible tombe.
+  console.log('\n--- vider la memoire ---');
+  check(
+    'le bouton vider la memoire est present',
+    await cdp.evaluate(`Boolean([...document.querySelectorAll('button')].find((b) => b.textContent.includes('Vider la memoire')))`),
+  );
+  const beforeClear = await cdp.evaluate(`window.streamcontrol.replayAvailable(${JSON.stringify(target.id)}).then((r) => r.seconds)`);
+  await cdp.evaluate(`window.confirm = () => true`);
+  await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('Vider la memoire'));
+    if (b) b.click();
+  })()`);
+  await sleep(1500);
+  const afterClear = await cdp.evaluate(`window.streamcontrol.replayAvailable(${JSON.stringify(target.id)}).then((r) => r.seconds)`);
+  check('la memoire repart de zero', afterClear < beforeClear, `${beforeClear} s -> ${afterClear} s`);
 
   cdp.close();
 } catch (error) {

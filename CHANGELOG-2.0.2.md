@@ -124,11 +124,44 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   change (`node.nextElementSibling !== reference`). Le plein ecran tient.
 - Fichiers : `src/main/remote-desktop-page.ts`.
 
-## 9. Tests
+## 9. Replay : duree « 0:00 » dans le lecteur
+- **Symptome** : le fichier de replay se lit, mais le lecteur affiche **0:00**
+  comme duree, alors que la lecture continue.
+- **Cause** : chaque segment de MediaMTX porte un en-tete dont les durees
+  decrivent **ce seul segment** (`mvhd` = quelques secondes, `tkhd` et `mdhd` a
+  **zero**). La mise bout a bout conservait cet en-tete : la duree totale du
+  fichier etait donc celle d'un segment, et la piste annoncait zero.
+- **Correction** : a la finalisation, `fmp4.ts` reecrit les durees de l'en-tete
+  (`mvhd`, `tkhd`, `mdhd`) pour qu'elles decrivent le fichier **entier**,
+  cumulees par piste. La capture fait de meme a l'arret.
+- Fichiers : `src/main/fmp4.ts`, `src/main/capture.ts`.
+
+## 10. Replay : vider la memoire d'un flux
+- Nouveau bouton **« Vider la memoire »** dans l'onglet Replay : il efface les
+  segments du tampon d'un flux, apres confirmation. Utile apres une
+  reinstallation, quand des segments d'une session precedente subsistent et
+  gonflent la duree annoncee (une valeur comme `962.999... s`).
+- La duree disponible est desormais **arrondie** (plus de `962.9999999 s`), et
+  l'interface la **borne a la memoire configuree** : la barre ne peut plus
+  depasser 100 %.
+- Fichiers : `src/main/replay.ts`, `src/main/stream-controller.ts`,
+  `src/main/ipc.ts`, `src/preload/index.ts`, `src/shared/channels.ts`,
+  `src/shared/types.ts`, `src/renderer/hooks/useStreamControl.ts`,
+  `src/renderer/views/ReplayView.tsx`, `src/renderer/components/Icon.tsx`,
+  `src/shared/i18n.ts`.
+
+## 11. Replay : barre de lecture sur toute la largeur
+- La barre de lecture n'est plus dans une colonne : elle occupe **toute la
+  largeur**, sous la liste des flux. C'est elle qui donne la duree de l'extrait,
+  elle doit rester lisible meme avec une memoire de 500 s.
+- Fichiers : `src/renderer/views/ReplayView.tsx`,
+  `src/renderer/styles/global.css`.
+
+## 12. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
   lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, replay
   demande depuis un appareil (preparation, telechargement MP4, suppression,
-  403 sans autorisation).
+  403 sans autorisation), vidage de la memoire.
 - `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
   autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
   grille, presence du replay.
@@ -137,10 +170,10 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - `tests/e2e/player.mjs` : ecran « pas de flux » (message avec variable
   resolue, fond personnalise, mode noir).
 - `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
-  de temps par piste), selection d'une plage de replay, reglages de replay
-  bornes.
+  de temps par piste), **duree totale annoncee par l'en-tete assemble**,
+  selection d'une plage de replay, reglages de replay bornes.
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **43 tests unitaires · 491 verifications e2e · 0 echec.**
+Chiffres : **44 tests unitaires · 494 verifications e2e · 0 echec.**
 

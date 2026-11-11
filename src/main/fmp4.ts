@@ -155,6 +155,111 @@ function tkhdTrackId(buffer: Buffer, box: Box): number {
 }
 
 /**
+ * Decalage du champ `duration` d'une boite a version + dates.
+ *
+ * `mvhd`, `tkhd` et `mdhd` partagent la meme trame : en-tete (8), version +
+ * flags (4), deux dates (4 ou 8 octets selon la version), puis leurs champs
+ * propres. Seul le nombre de champs intermediaires change.
+ */
+function durationOffset(buffer: Buffer, box: Box, extraFields: number): number {
+  const version = buffer.readUInt8(box.start + 8);
+  const dateSize = version === 1 ? 8 : 4;
+  return box.start + 8 + 4 + 2 * dateSize + extraFields;
+}
+
+/** Ecrit une duree (4 ou 8 octets selon la version de la boite). */
+function writeDuration(buffer: Buffer, offset: number, version: number, seconds: number, timescale: number): void {
+  const units = Math.max(0, Math.round(seconds * timescale));
+  if (version === 1) buffer.writeBigUInt64BE(BigInt(units), offset);
+  else buffer.writeUInt32BE(units >>> 0, offset);
+}
+
+/**
+ * Reecrit les durees de l'en-tete (`moov`) pour qu'elles decrivent le fichier
+ * ENTIER.
+ *
+ * Chaque segment de MediaMTX porte un en-tete dont les durees decrivent ce seul
+ * segment : `mvhd` annonce quelques secondes, et `tkhd` comme `mdhd` annoncent
+ * ZERO (les durees reelles vivent dans les fragments). Un fichier obtenu par
+ * mise bout a bout garde donc cet en-tete : le lecteur affiche « 0:00 » comme
+ * duree totale, alors que la lecture continue. On ecrit ici les vraies durees,
+ * cumulees par piste.
+ *
+ * @param moov en-tete a modifier SUR PLACE.
+ * @param running duree cumulee par piste, en unites de sa base de temps.
+ * @param timescales base de temps par piste.
+ */
+function patchMoovDurations(
+  moov: Buffer,
+  running: Map<number, bigint>,
+  timescales: Map<number, number>,
+): void {
+  // `moov` est exactement la boite : elle occupe tout le tampon recu.
+  const moovBox: Box = { type: 'moov', start: 0, size: moov.length };
+  const mvhd = findBox(moov, 'mvhd');
+  const movieTimescale = mvhd ? mdhdTimescale(moov, mvhd) : 0;
+
+  // Duree de chaque piste, en secondes.
+  const trackSeconds = new Map<number, number>();
+  let longest = 0;
+  for (const [trackId, units] of running) {
+    const timescale = timescales.get(trackId) ?? 0;
+    if (timescale <= 0) continue;
+    const seconds = Number(units) / timescale;
+    trackSeconds.set(trackId, seconds);
+    if (seconds > longest) longest = seconds;
+  }
+
+  // Duree globale : celle de la piste la plus longue, dans la base du film.
+  if (mvhd && movieTimescale > 0) {
+    writeDuration(moov, durationOffset(moov, mvhd, 4), moov.readUInt8(mvhd.start + 8), longest, movieTimescale);
+  }
+
+  for (const trak of childBoxes(moov, moovBox)) {
+    if (trak.type !== 'trak') continue;
+    const children = childBoxes(moov, trak);
+    const tkhd = children.find((entry) => entry.type === 'tkhd');
+    const mdia = children.find((entry) => entry.type === 'mdia');
+    if (!tkhd) continue;
+    const trackId = tkhdTrackId(moov, tkhd);
+    const seconds = trackSeconds.get(trackId);
+    if (seconds === undefined) continue;
+
+    // tkhd : duree dans la base de temps du film (track_ID + reserved avant).
+    if (movieTimescale > 0) {
+      writeDuration(moov, durationOffset(moov, tkhd, 8), moov.readUInt8(tkhd.start + 8), seconds, movieTimescale);
+    }
+    // mdhd : duree dans la base de temps de la piste (timescale avant).
+    if (mdia) {
+      const mdhd = findBox(moov, 'mdhd', mdia.start + 8, mdia.start + mdia.size);
+      const timescale = timescales.get(trackId) ?? 0;
+      if (mdhd && timescale > 0) {
+        writeDuration(moov, durationOffset(moov, mdhd, 4), moov.readUInt8(mdhd.start + 8), seconds, timescale);
+      }
+    }
+  }
+}
+
+/** Base de temps par piste d'un en-tete fMP4, a partir des `tkhd` et `mdhd`. */
+function parseTrackTimescales(init: Buffer): Map<number, number> {
+  const timescales = new Map<number, number>();
+  const moov = findBox(init, 'moov');
+  if (!moov) return timescales;
+  for (const trak of childBoxes(init, moov)) {
+    if (trak.type !== 'trak') continue;
+    const children = childBoxes(init, trak);
+    const tkhd = children.find((entry) => entry.type === 'tkhd');
+    const mdia = children.find((entry) => entry.type === 'mdia');
+    if (!tkhd || !mdia) continue;
+    const mdhd = findBox(init, 'mdhd', mdia.start + 8, mdia.start + mdia.size);
+    if (!mdhd) continue;
+    const timescale = mdhdTimescale(init, mdhd);
+    if (timescale > 0) timescales.set(tkhdTrackId(init, tkhd), timescale);
+  }
+  return timescales;
+}
+
+/**
  * Duree, en unites de la base de temps, de tous les `trun` d'un `traf`.
  */
 function trafDuration(buffer: Buffer, traf: Box): bigint {
@@ -284,11 +389,24 @@ export interface Fmp4WriterState {
   sequence: number;
   running: Map<number, bigint>;
   initWritten: boolean;
+  /** Copie modifiable du `moov` du premier segment, pour en corriger les durees. */
+  initMoov: Buffer | null;
+  /** Position du `moov` dans le premier bloc ecrit, pour le corriger dans un fichier. */
+  initOffset: number;
+  /** Base de temps par piste, lue dans l'en-tete. */
+  timescales: Map<number, number>;
 }
 
 /** Cree un etat d'assemblage vide. */
 export function createFmp4Writer(): Fmp4WriterState {
-  return { sequence: 0, running: new Map(), initWritten: false };
+  return {
+    sequence: 0,
+    running: new Map(),
+    initWritten: false,
+    initMoov: null,
+    initOffset: 0,
+    timescales: new Map(),
+  };
 }
 
 /**
@@ -299,8 +417,22 @@ export function createFmp4Writer(): Fmp4WriterState {
 export function fmp4Append(state: Fmp4WriterState, segment: Buffer): Buffer | null {
   const parts: Buffer[] = [];
   for (const box of listBoxes(segment)) {
-    if (box.type === 'ftyp' || box.type === 'moov') {
+    if (box.type === 'ftyp') {
       if (!state.initWritten) parts.push(Buffer.from(segment.subarray(box.start, box.start + box.size)));
+      continue;
+    }
+    if (box.type === 'moov') {
+      if (!state.initWritten) {
+        // On garde une copie modifiable du `moov` : ses durees seront corrigees
+        // a la finalisation, une fois la duree totale connue. On retient aussi
+        // sa position dans le bloc, pour pouvoir le corriger dans un fichier
+        // ecrit en flux (capture).
+        const moov = Buffer.from(segment.subarray(box.start, box.start + box.size));
+        state.initMoov = moov;
+        state.initOffset = parts.reduce((total, part) => total + part.length, 0);
+        state.timescales = parseTrackTimescales(moov);
+        parts.push(moov);
+      }
       continue;
     }
     if (box.type === 'moof') {
@@ -320,6 +452,19 @@ export function fmp4Append(state: Fmp4WriterState, segment: Buffer): Buffer | nu
 }
 
 /**
+ * Corrige les durees de l'en-tete une fois l'assemblage termine.
+ *
+ * A appeler apres le dernier `fmp4Append` et AVANT de concatener les morceaux :
+ * le `moov` conserve par l'etat est alors modifie en place, et la concatenation
+ * en reprend le contenu corrige. Sans cela, la duree annoncee par le fichier
+ * reste celle d'un seul segment (`tkhd` et `mdhd` a zero), et le lecteur affiche
+ * « 0:00 » alors que la lecture continue.
+ */
+export function fmp4Finalize(state: Fmp4WriterState): void {
+  if (state.initMoov) patchMoovDurations(state.initMoov, state.running, state.timescales);
+}
+
+/**
  * Assemble des segments fMP4 en un seul MP4 valide.
  *
  * @returns le tampon du fichier, ou null si aucun segment exploitable.
@@ -332,6 +477,10 @@ export function concatFragmentedMp4(segments: Buffer[]): Buffer | null {
     if (chunk) parts.push(chunk);
   }
   if (!state.initWritten || parts.length === 0) return null;
+  // La duree totale n'est connue qu'ici : on corrige alors l'en-tete. Le
+  // `moov` est dans le premier morceau ; on y recopie la version corrigee.
+  fmp4Finalize(state);
+  if (state.initMoov && parts[0]) state.initMoov.copy(parts[0], state.initOffset);
   return Buffer.concat(parts);
 }
 
