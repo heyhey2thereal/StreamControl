@@ -1,36 +1,67 @@
 import { useEffect, useRef } from 'react';
-import Hls from 'hls.js';
 
 /**
- * Apercu d'un flux en direct, pour l'onglet Replay.
+ * Apercu d'un extrait du tampon, pour l'onglet Replay.
  *
- * Chromium (donc Electron) ne lit pas le HLS nativement : on passe par hls.js.
- * L'apercu est **muet** : c'est une image de controle, pas une ecoute, et un
- * flux sonore qui demarre tout seul serait desagreable.
+ * On lit le **clip du tampon** (et non le direct) : c'est une video deplacable
+ * dans le temps, ce qui permet de montrer exactement l'image au debut de la
+ * plage selectionnee. Le direct HLS, lui, ne se deplace pas.
  *
- * Le lecteur est reutilise : changer de flux detruit proprement l'instance
- * precedente, sinon les sessions s'accumuleraient cote MediaMTX.
+ * L'apercu est **muet** : c'est une image de controle, pas une ecoute.
+ *
+ * @param src adresse du clip.
+ * @param seekSeconds position a montrer, en secondes depuis le debut du clip.
+ *   `null` : lecture normale depuis le debut.
  */
-export function StreamPreview({ src }: { src: string }) {
+export function StreamPreview({
+  src,
+  seekSeconds,
+  onReady,
+}: {
+  src: string;
+  seekSeconds?: number | null;
+  onReady?: (video: HTMLVideoElement) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // La source change (nouveau flux, nouveau clip) : on recharge.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !src) return;
+    video.load();
+    void video.play().catch(() => undefined);
+  }, [src]);
+
+  // La position demandee change : on deplace la lecture.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || seekSeconds === undefined || seekSeconds === null) return;
+    const apply = () => {
+      try {
+        video.currentTime = Math.max(0, seekSeconds);
+      } catch {
+        // La duree n'est pas encore connue : on retente a l'arrivee des donnees.
+      }
+      video.pause();
+    };
+    if (video.readyState >= 1) apply();
+    else video.addEventListener('loadedmetadata', apply, { once: true });
+  }, [seekSeconds, src]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src) return undefined;
+    if (video && onReady) onReady(video);
+  }, [onReady, src]);
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 1, backBufferLength: 0 });
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => undefined));
-      return () => hls.destroy();
-    }
-
-    // Safari lit le HLS nativement.
-    video.src = src;
-    void video.play().catch(() => undefined);
-    return undefined;
-  }, [src]);
-
-  return <video ref={videoRef} className="replay-preview-video" muted autoPlay playsInline controls />;
+  return (
+    <video
+      ref={videoRef}
+      className="replay-preview-video"
+      src={src}
+      muted
+      playsInline
+      controls
+      preload="auto"
+    />
+  );
 }

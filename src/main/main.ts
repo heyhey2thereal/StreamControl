@@ -106,6 +106,11 @@ const webPages = new WebPagesServer({
   // la page recue n'a plus qu'a l'afficher, sans connaitre les variables.
   getSceneOffline: (streamName: string) => {
     const scene = settings.get().scene;
+    // Fonction desactivee : on ne transmet AUCUN ecran personnalise, la page
+    // garde donc son message d'attente habituel. Sans ce garde-fou, le simple
+    // fait d'avoir choisi un texte autrefois suffisait a le voir apparaitre
+    // dans OBS, sans que l'operateur l'ait demande.
+    if (!scene.offlineEnabled) return undefined;
     const endpoint = streams.list().find((entry) => entry.name === streamName);
     const values = buildVariableMap({
       flux: endpoint

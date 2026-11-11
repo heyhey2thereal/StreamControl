@@ -544,77 +544,93 @@ export function SettingsView({ sc, onOpenLock }: { sc: StreamControl; onOpenLock
 
           {/* --- Ecran d'une cellule quand le flux ne publie pas --------- */}
           <div className="section-title" style={{ marginTop: 18 }}>{t('scene.offlineTitle')}</div>
-          <div className="hint">{t('scene.offlineHint')}</div>
-
-          <div className="field" style={{ marginTop: 10 }}>
-            <label>{t('scene.offlineModeLabel')}</label>
-            <select
-              className="input"
-              value={draft.scene.offlineMode}
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={draft.scene.offlineEnabled}
               onChange={(event) =>
-                patch({
-                  scene: { ...draft.scene, offlineMode: event.target.value as 'black' | 'message' },
-                })
+                patch({ scene: { ...draft.scene, offlineEnabled: event.target.checked } })
               }
-            >
-              <option value="black">{t('scene.offlineModeBlack')}</option>
-              <option value="message">{t('scene.offlineModeMessage')}</option>
-            </select>
-          </div>
+            />
+            {t('scene.offlineEnable')}
+          </label>
+          <div className="hint">{t('scene.offlineEnableHint')}</div>
 
-          {draft.scene.offlineMode === 'message' ? (
+          {draft.scene.offlineEnabled ? (
             <>
-              <div className="field">
-                <label>{t('scene.offlineTextLabel')}</label>
-                <textarea
+              <div className="hint" style={{ marginTop: 10 }}>{t('scene.offlineHint')}</div>
+
+              <div className="field" style={{ marginTop: 10 }}>
+                <label>{t('scene.offlineModeLabel')}</label>
+                <select
                   className="input"
-                  rows={3}
-                  value={draft.scene.offlineText}
-                  placeholder={t('scene.offlineTextPlaceholder')}
-                  onChange={(event) => patch({ scene: { ...draft.scene, offlineText: event.target.value } })}
-                />
-                <div className="hint">{t('scene.offlineHint')}</div>
-              </div>
-
-              <div className="grid grid-2">
-                <div className="field">
-                  <label>{t('scene.offlineTextColor')}</label>
-                  <input
-                    className="input"
-                    type="color"
-                    value={draft.scene.offlineTextColor}
-                    onChange={(event) =>
-                      patch({ scene: { ...draft.scene, offlineTextColor: event.target.value } })
-                    }
-                  />
-                </div>
-                <div className="field">
-                  <label>{t('scene.offlineBackground')}</label>
-                  <input
-                    className="input"
-                    type="color"
-                    value={draft.scene.offlineBackground}
-                    onChange={(event) =>
-                      patch({ scene: { ...draft.scene, offlineBackground: event.target.value } })
-                    }
-                  />
-                </div>
-              </div>
-
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={draft.scene.offlineSpinner}
+                  value={draft.scene.offlineMode}
                   onChange={(event) =>
-                    patch({ scene: { ...draft.scene, offlineSpinner: event.target.checked } })
+                    patch({
+                      scene: { ...draft.scene, offlineMode: event.target.value as 'black' | 'message' },
+                    })
                   }
-                />
-                {t('scene.offlineSpinnerLabel')}
-              </label>
-
-              <div className="hint" style={{ marginTop: 8 }}>
-                {t('scene.offlinePreview')} : {draft.scene.offlineText || t('scene.offlineTextPlaceholder')}
+                >
+                  <option value="black">{t('scene.offlineModeBlack')}</option>
+                  <option value="message">{t('scene.offlineModeMessage')}</option>
+                </select>
               </div>
+
+              {draft.scene.offlineMode === 'message' ? (
+                <>
+                  <div className="field">
+                    <label>{t('scene.offlineTextLabel')}</label>
+                    <textarea
+                      className="input"
+                      rows={3}
+                      value={draft.scene.offlineText}
+                      placeholder={t('scene.offlineTextPlaceholder')}
+                      onChange={(event) => patch({ scene: { ...draft.scene, offlineText: event.target.value } })}
+                    />
+                    <div className="hint">{t('scene.offlineHint')}</div>
+                  </div>
+
+                  <div className="grid grid-2">
+                    <div className="field">
+                      <label>{t('scene.offlineTextColor')}</label>
+                      <input
+                        className="input"
+                        type="color"
+                        value={draft.scene.offlineTextColor}
+                        onChange={(event) =>
+                          patch({ scene: { ...draft.scene, offlineTextColor: event.target.value } })
+                        }
+                      />
+                    </div>
+                    <div className="field">
+                      <label>{t('scene.offlineBackground')}</label>
+                      <input
+                        className="input"
+                        type="color"
+                        value={draft.scene.offlineBackground}
+                        onChange={(event) =>
+                          patch({ scene: { ...draft.scene, offlineBackground: event.target.value } })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={draft.scene.offlineSpinner}
+                      onChange={(event) =>
+                        patch({ scene: { ...draft.scene, offlineSpinner: event.target.checked } })
+                      }
+                    />
+                    {t('scene.offlineSpinnerLabel')}
+                  </label>
+
+                  <div className="hint" style={{ marginTop: 8 }}>
+                    {t('scene.offlinePreview')} : {draft.scene.offlineText || t('scene.offlineTextPlaceholder')}
+                  </div>
+                </>
+              ) : null}
             </>
           ) : null}
         </div>

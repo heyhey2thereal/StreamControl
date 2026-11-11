@@ -192,6 +192,19 @@ try {
   const after = await cdp.evaluate('document.querySelector(".replay-summary")?.textContent ?? ""');
   check('deplacer une poignee change la duree', before !== after, `${before} -> ${after}`);
 
+  // Pellicule : une vignette par seconde, et un apercu du clip du tampon.
+  check('la pellicule est presente', await cdp.evaluate('Boolean(document.querySelector(".replay-filmstrip-canvas"))'));
+  check('l apercu de la selection est present', await cdp.evaluate('Boolean(document.querySelector(".replay-preview video"))'));
+  // Le clip du tampon est servi avec support des requetes partielles : sans
+  // cela, la video ne peut pas se deplacer dans le temps.
+  const clipUrl = await cdp.evaluate(
+    `window.streamcontrol.streamsList().then((list) => (list || []).find((s) => s.id === ${JSON.stringify(target.id)})?.urls?.replayClip ?? '')`,
+  );
+  const clip = await request(clipUrl, { headers: { Range: 'bytes=0-1023' } });
+  check('le clip du tampon repond en 206', clip.status === 206, `HTTP ${clip.status}`);
+  check('le clip annonce les plages', clip.headers['accept-ranges'] === 'bytes', String(clip.headers['accept-ranges']));
+  check('le clip est un MP4', String(clip.headers['content-type']).includes('video/mp4'), String(clip.headers['content-type']));
+
   // --- Replay demande depuis un appareil du reseau -----------------------
   //
   // Le panneau distant prepare l'extrait sur le poste, l'appareil le

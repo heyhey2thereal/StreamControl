@@ -249,22 +249,56 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   effacer des enregistrements).
 - Fichiers : `build/uninstall-cleanup.nsh` (nouveau), `package.json`.
 
-## 22. Tests
+## 22. Ecran « pas de flux » : activation explicite
+- **Cause** : l'ecran « pas de flux » etait applique des qu'un texte avait ete
+  saisi, meme si l'operateur ne l'avait jamais demande. Les cellules OBS
+  affichaient donc ce message au lieu du lecteur normal.
+- **Correction** : une case **« Afficher un ecran “pas de flux” dans les
+  cellules OBS »**, **desactivee par defaut**, dans Parametres > OBS Studio.
+  Tant qu'elle est decochee, la cellule se comporte comme une page de lecture
+  ordinaire.
+- Fichiers : `src/shared/types.ts`, `src/main/settings.ts`, `src/main/main.ts`,
+  `src/renderer/views/SettingsView.tsx`, `src/shared/i18n.ts`.
+
+## 23. Replay : progress de la droite vers la gauche, apercu et pellicule
+- **Progress de droite a gauche** : le direct est a droite, le plus ancien a
+  gauche. Le remplissage est ancre au direct et s'etend vers la gauche ; la
+  tete de lecture marque son bord gauche. C'est le sens d'une barre de temps
+  video.
+- **Apercu de la selection** : l'apercu lit desormais le **clip du tampon** (une
+  video deplacable dans le temps) et montre l'image au **debut de l'extrait
+  choisi**. Le direct HLS, lui, ne se deplace pas.
+- **Pellicule** : une **vignette par seconde** est dessinee sous la barre, comme
+  dans un logiciel de montage, du plus ancien (a gauche) au direct (a droite).
+- Le tout est aussi disponible sur le **panneau distant PC**, a l'identique.
+- Nouvelle route `GET /clip/<flux>` : le clip du tampon, avec support des
+  requetes partielles (`Range`), mis en cache quelques secondes.
+- Fichiers : `src/renderer/views/ReplayView.tsx`,
+  `src/renderer/components/ReplayFilmstrip.tsx` (nouveau),
+  `src/renderer/components/StreamPreview.tsx`, `src/main/replay.ts`,
+  `src/main/stream-controller.ts`, `src/main/web-pages.ts`,
+  `src/main/remote-desktop-page.ts`, `src/shared/types.ts`,
+  `src/renderer/styles/global.css`, `src/shared/i18n.ts`.
+
+## 24. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
-  lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, replay
-  demande depuis un appareil (preparation, telechargement MP4 **sans en-tete
-  d'autorisation**, nom de fichier, suppression, 403 sans autorisation), vidage
-  de la memoire.
+  lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, **pellicule
+  et apercu presents**, **clip du tampon servi en 206 (requetes partielles)**,
+  replay demande depuis un appareil (preparation, telechargement MP4 **sans
+  en-tete d'autorisation**, nom de fichier, suppression, 403 sans autorisation),
+  vidage de la memoire.
 - `tests/e2e/recording.mjs` : demarrage de l'enregistrement en moins de 3 s,
   duree du fichier conforme au temps enregistre (sans perte), duree non nulle.
 - `tests/e2e/update.mjs` : fenetre au lancement, notes, trois reponses,
   **version plus ancienne ignoree**, version ecartee, verification sans jeton,
   pas de retour de la fenetre apres un changement de reglage.
 - `tests/e2e/player.mjs` : son de l'apercu (video non `muted`), ecran « pas de
-  flux » (message avec variable resolue, fond personnalise, mode noir).
+  flux » **desactive par defaut puis active** (message avec variable resolue,
+  fond personnalise, mode noir).
 - `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
   autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
-  grille, barre de lecture du replay a deux poignees.
+  grille, barre de lecture du replay a deux poignees, **pellicule et apercu**,
+  progress de la droite vers la gauche.
 - `tests/e2e/obs.mjs` : parametre unique par source, resolution par cellule,
   flux desactive masque dans OBS.
 - `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
@@ -275,5 +309,5 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **47 tests unitaires · 503 verifications e2e · 0 echec.**
+Chiffres : **47 tests unitaires · 511 verifications e2e · 0 echec.**
 

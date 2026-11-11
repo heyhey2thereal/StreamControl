@@ -117,6 +117,20 @@ Disponible sur **Windows**, **macOS** et **Linux**.
   (paramètres, journaux, enregistrements, tampon de replay) doivent aussi être
   supprimées. Par défaut : non.
 
+- **Écran « pas de flux » : activation explicite.** Une case, désactivée par
+  défaut, dans Paramètres > OBS Studio : tant qu'elle est décochée, la cellule
+  OBS se comporte comme une page de lecture ordinaire. Auparavant, avoir saisi
+  un texte autrefois suffisait à le voir apparaître, sans l'avoir demandé.
+
+- **Replay : progress de droite à gauche.** Le direct est à droite, le plus
+  ancien à gauche : la barre se remplit du direct vers la gauche, comme sur une
+  barre de temps vidéo.
+
+- **Replay : aperçu de la sélection et pellicule.** L'aperçu montre l'image au
+  début de l'extrait choisi, et une **pellicule** affiche **une vignette par
+  seconde** sous la barre, comme dans un logiciel de montage. Le tout est aussi
+  disponible sur le panneau distant PC.
+
 ---
 
 ## Replay depuis un appareil

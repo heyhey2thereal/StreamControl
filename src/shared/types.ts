@@ -200,6 +200,14 @@ export interface AppSettings {
  * comme « Nous avons perdu le retour video de {flux_nom} ».
  */
 export interface SceneDisplaySettings {
+  /**
+   * Vrai pour appliquer l'ecran « pas de flux » choisi ci-dessous.
+   *
+   * Faux (defaut) : la cellule affiche le lecteur normal, qui attend le flux.
+   * C'est voulu : tant que l'operateur n'a rien demande, une source OBS doit
+   * se comporter comme n'importe quelle page de lecture.
+   */
+  offlineEnabled: boolean;
   /** 'black' : ecran noir. 'message' : texte (et anneau de chargement). */
   offlineMode: 'black' | 'message';
   /** Texte affiche en mode « message ». Variables acceptees. */
@@ -893,6 +901,13 @@ export interface EndpointUrls {
   mediamtxWatch: string;
   /** Apercu integre : la page de lecture sans habillage. */
   embed: string;
+  /**
+   * Clip du tampon : une video deplacable dans le temps.
+   *
+   * Le direct HLS ne se deplace pas ; ce clip sert a l'apercu et a la pellicule
+   * de l'onglet Replay, ou l'on veut voir l'image a un instant precis.
+   */
+  replayClip: string;
   /** Liste des flux, au format JSON. */
   api: string;
 }

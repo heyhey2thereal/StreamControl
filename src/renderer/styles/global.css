@@ -3403,7 +3403,7 @@ input[type='range'].input {
   border-radius: 4px;
 }
 
-/* Tete de lecture du direct : elle avance de gauche a droite. */
+/* Tete de lecture du direct : elle avance de la droite vers la gauche. */
 .replay-playhead {
   position: absolute;
   top: -4px;
@@ -3413,6 +3413,23 @@ input[type='range'].input {
   background: var(--rec, #ef4444);
   box-shadow: 0 0 6px var(--rec, #ef4444);
   pointer-events: none;
+}
+
+/* Pellicule : une vignette par seconde, alignee sur la barre (le direct a
+   droite). Elle est ancree a droite, comme le remplissage. */
+.replay-filmstrip {
+  position: relative;
+  margin-left: auto;
+  height: 54px;
+  overflow: hidden;
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 4px;
+  background: var(--bg-0);
+}
+.replay-filmstrip-canvas {
+  display: block;
+  height: 54px;
+  width: 100%;
 }
 
 /* Apercu du direct, sous la barre : on voit ce que l'on va recuperer. */

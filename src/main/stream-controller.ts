@@ -25,7 +25,7 @@ import type {
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
 import { buildPathOptions, resolveRecordingDir } from './recording';
-import { replayPathOptions, saveReplay, buildReplay, replayState, clearReplayBuffer, type SaveReplayOptions, type ReplayBuild } from './replay';
+import { replayPathOptions, saveReplay, buildReplay, buildBufferClip, replayState, clearReplayBuffer, type SaveReplayOptions, type ReplayBuild, type ReplayClip } from './replay';
 import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
@@ -339,6 +339,9 @@ export class StreamController extends EventEmitter {
       mediamtxWatch: `http://${loopback}:${webPagesPort}/webrtc/${streamPath}/`,
       // Apercu integre au tableau de bord : meme lecteur, sans habillage.
       embed: `http://${loopback}:${webPagesPort}/embed/${streamPath}`,
+      // Clip du tampon : video deplacable dans le temps, pour l'apercu et la
+      // pellicule de l'onglet Replay.
+      replayClip: `http://${loopback}:${webPagesPort}/clip/${streamPath}`,
       api: `http://${loopback}:${webPagesPort}/api/streams`,
     };
   }
@@ -473,6 +476,19 @@ export class StreamController extends EventEmitter {
     if (!endpoint) return { ok: false, message: 'Flux inconnu.' };
     const settings = this.settings.get();
     return buildReplay(settings, endpoint.path, this.logger, options);
+  }
+
+  /**
+   * Assemble le tampon d'un flux en une video deplacable dans le temps.
+   *
+   * Sert a l'apercu et a la pellicule de la timeline : un flux HLS en direct ne
+   * se deplace pas, alors qu'on veut montrer l'image a un instant precis.
+   */
+  async buildBufferClip(id: string): Promise<ReplayClip> {
+    const endpoint = this.registry.get(id);
+    if (!endpoint) return { ok: false, message: 'Flux inconnu.' };
+    const settings = this.settings.get();
+    return buildBufferClip(settings, endpoint.path, this.logger);
   }
 
   /** Etat du replay pour un flux : memoire disponible et pret ou non. */

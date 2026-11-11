@@ -89,6 +89,10 @@ export function defaultSettings(): AppSettings {
     macros: [],
     showRunner: [],
     scene: {
+      // Desactive par defaut : une source OBS se comporte comme une page de
+      // lecture ordinaire tant que l'operateur n'a pas demande l'ecran
+      // « pas de flux ».
+      offlineEnabled: false,
       // Par defaut : un message explicite, plus utile qu'un ecran noir muet.
       offlineMode: 'message',
       offlineText: 'Nous avons perdu le retour video de {flux_nom}. Il revient dans quelques secondes.',
@@ -253,6 +257,7 @@ export function sanitizeSettings(settings: AppSettings): AppSettings {
         }))
     : [];
 
+  clean.scene.offlineEnabled = clean.scene.offlineEnabled === true;
   clean.scene.offlineMode = clean.scene.offlineMode === 'black' ? 'black' : 'message';
   clean.scene.offlineText = String(clean.scene.offlineText ?? '').slice(0, 500);
   clean.scene.offlineSpinner = clean.scene.offlineSpinner !== false;

@@ -26,6 +26,15 @@ import { describeDeviceKind } from './remote';
 import type { RemotePermissions } from '../shared/types';
 import type { ObsController } from './obs-controller';
 
+/**
+ * Duree de validite d'un clip du tampon, en millisecondes.
+ *
+ * Court : le clip doit suivre le direct de pres. Assez long pour que les
+ * demandes successives de la page (apercu, pellicule) reutilisent le meme
+ * fichier au lieu de le reconstruire a chaque fois.
+ */
+const BUFFER_CLIP_TTL_MS = 4000;
+
 export interface WebPagesOptions {
   logger: Logger;
   streams: StreamController;
@@ -50,7 +59,7 @@ export interface WebPagesOptions {
     spinner: boolean;
     textColor: string;
     background: string;
-  };
+  } | undefined;
   /** Gestionnaire du panneau distant. Absent = Remote indisponible. */
   remote?: RemoteManager;
   /** OBS, pour les transitions demandees depuis le telephone. */
@@ -181,6 +190,14 @@ export class WebPagesServer {
    * chemin sur le poste, et ne peut donc rien lire d'autre.
    */
   private readonly pendingReplays = new Map<string, { file: string; directory: string; name: string; at: number }>();
+  /**
+   * Clips du tampon, par flux, pour l'apercu et la pellicule.
+   *
+   * Un clip est assemble a la demande, puis reutilise quelques secondes : la
+   * page le demande plusieurs fois de suite, et le reconstruire a chaque fois
+   * serait inutilement couteux.
+   */
+  private readonly bufferClips = new Map<string, { file: string; directory: string; at: number }>();
 
   constructor(options: WebPagesOptions) {
     this.logger = options.logger;
@@ -323,6 +340,13 @@ export class WebPagesServer {
 
     if (url.pathname === '/' || url.pathname === '') {
       this.sendHtml(response, 200, this.renderIndex());
+      return;
+    }
+
+    // Clip du tampon : une video deplacable dans le temps, pour l'apercu et la
+    // pellicule de la timeline. Le direct HLS ne se deplace pas ; ce clip, si.
+    if (segments[0] === 'clip' && segments.length >= 2) {
+      void this.serveBufferClip(request, response, segments.slice(1).join('/'));
       return;
     }
 
@@ -505,6 +529,97 @@ export class WebPagesServer {
   <div class="sub">${escapeHtml(t('page.streamsSubtitle', { version: this.appVersion }))}</div>
   <div class="grid">${cards || `<p class="empty">${escapeHtml(t('page.noAddress'))}</p>`}</div>
 </div></body></html>`;
+  }
+
+  /**
+   * Sert le clip du tampon d'un flux, avec support des requetes partielles.
+   *
+   * Le clip est assemble a la demande puis mis en cache quelques secondes : la
+   * page le demande plusieurs fois (apercu, pellicule), et le reconstruire a
+   * chaque fois serait inutilement couteux. Le cache est rafraichi pour suivre
+   * le direct.
+   *
+   * Le support `Range` est indispensable : sans lui, la balise video ne peut
+   * pas se deplacer dans le temps, et la pellicule ne peut pas extraire une
+   * image a un instant precis.
+   */
+  private async serveBufferClip(
+    request: http.IncomingMessage,
+    response: ServerResponse,
+    path: string,
+  ): Promise<void> {
+    const endpoint = this.streams.list().find((entry) => entry.path === path);
+    if (!endpoint) {
+      this.sendJson(response, 404, { ok: false, message: 'Flux inconnu.' });
+      return;
+    }
+
+    const clip = await this.bufferClipFor(endpoint.id);
+    if (!clip) {
+      this.sendJson(response, 503, { ok: false, message: 'Tampon indisponible.' });
+      return;
+    }
+
+    let stat;
+    try {
+      stat = await fs.stat(clip);
+    } catch {
+      this.sendJson(response, 503, { ok: false, message: 'Clip indisponible.' });
+      return;
+    }
+
+    // Requete partielle : le navigateur ne lit que ce qu'il demande.
+    const range = request.headers.range;
+    const match = typeof range === 'string' ? /bytes=(\d*)-(\d*)/.exec(range) : null;
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Number(match[2]) : stat.size - 1;
+      const last = Math.min(end, stat.size - 1);
+      if (start >= stat.size || start > last) {
+        response.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+        response.end();
+        return;
+      }
+      response.writeHead(206, {
+        'Content-Type': 'video/mp4',
+        'Content-Length': last - start + 1,
+        'Content-Range': `bytes ${start}-${last}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      });
+      createReadStream(clip, { start, end: last }).pipe(response);
+      return;
+    }
+
+    response.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': stat.size,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store',
+    });
+    createReadStream(clip).pipe(response);
+  }
+
+  /**
+   * Clip du tampon d'un flux, mis en cache quelques secondes.
+   *
+   * @returns le chemin du fichier, ou null si l'assemblage a echoue.
+   */
+  private async bufferClipFor(streamId: string): Promise<string | null> {
+    const cached = this.bufferClips.get(streamId);
+    if (cached && Date.now() - cached.at < BUFFER_CLIP_TTL_MS) return cached.file;
+
+    const result = await this.streams.buildBufferClip(streamId);
+    if (!result.ok || !result.file) return cached?.file ?? null;
+
+    // On remplace l'ancien clip et on efface son dossier temporaire.
+    if (cached) void fs.rm(cached.directory, { recursive: true, force: true }).catch(() => {});
+    this.bufferClips.set(streamId, {
+      file: result.file,
+      directory: result.directory ?? path.dirname(result.file),
+      at: Date.now(),
+    });
+    return result.file;
   }
 
   /**
@@ -862,6 +977,9 @@ export class WebPagesServer {
         videoHeight: endpoint.status.videoHeight,
         // Duree de replay reellement disponible pour ce flux, en secondes.
         replaySeconds: available.get(endpoint.id) ?? 0,
+        // Clip du tampon : video deplacable dans le temps, pour l'apercu et la
+        // pellicule. Le direct HLS ne se deplace pas.
+        replayClip: `/clip/${endpoint.path}`,
         hls: `/hls/${endpoint.path}/index.m3u8`,
         // Lecture WebRTC (WHEP) : bien plus proche du direct que le HLS. Le
         // panneau distant l'essaie en premier, comme la page de lecture du

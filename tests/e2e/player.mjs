@@ -134,10 +134,20 @@ try {
   check('l apercu integre preserve le format', /object-fit:\s*contain/.test(embed.body));
 
   // --- 2b. Ecran « pas de flux » des cellules de scene OBS ----------------
-  // Par defaut : un message personnalise, avec les variables resolues.
+  // DESACTIVE par defaut : la cellule affiche le lecteur normal, qui attend le
+  // flux. C'est le defaut corrige : auparavant, avoir choisi un texte autrefois
+  // suffisait a le voir apparaitre dans OBS sans l'avoir demande.
   console.log('\n--- ecran pas de flux ---');
   await cdp.evaluate(
-    `window.streamcontrol.saveSettings({ scene: { offlineMode: 'message', offlineText: 'Perdu {flux_nom} !', offlineSpinner: true, offlineTextColor: '#ff0000', offlineBackground: '#101010' } })`,
+    `window.streamcontrol.saveSettings({ scene: { offlineEnabled: false, offlineMode: 'message', offlineText: 'Perdu {flux_nom} !' } })`,
+  );
+  await sleep(700);
+  const disabled = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);
+  check('desactive : aucun ecran personnalise n est servi', !disabled.body.includes('Perdu Cam !'), 'texte absent');
+
+  // Active : un message personnalise, avec les variables resolues.
+  await cdp.evaluate(
+    `window.streamcontrol.saveSettings({ scene: { offlineEnabled: true, offlineMode: 'message', offlineText: 'Perdu {flux_nom} !', offlineSpinner: true, offlineTextColor: '#ff0000', offlineBackground: '#101010' } })`,
   );
   await sleep(700);
   const message = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/embed/cam1`);

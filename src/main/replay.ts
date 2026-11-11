@@ -254,6 +254,19 @@ export interface ReplayBuild {
   message: string;
 }
 
+/** Clip du tampon assemble dans un fichier temporaire, pour l'apercu. */
+export interface ReplayClip {
+  ok: boolean;
+  /** Fichier temporaire a lire (video deplacable dans le temps). */
+  file?: string;
+  /** Dossier temporaire a supprimer apres usage. */
+  directory?: string;
+  /** Duree du clip, en secondes. */
+  seconds?: number;
+  /** Message lisible (succes ou raison du refus). */
+  message: string;
+}
+
 /**
  * Verifie une demande de replay et choisit les segments a assembler.
  *
@@ -378,6 +391,36 @@ export async function saveReplay(
 
   logger.info('replay', `Replay sauvegarde : ${target} (${plan.seconds} s, ${plan.selected.length} segments).`);
   return { ok: true, file: target, seconds: plan.seconds, message: `Replay sauvegarde (${plan.seconds} s).` };
+}
+
+/**
+ * Assemble tout le tampon (hors segment en cours) dans un fichier temporaire.
+ *
+ * Sert a l'**apercu** et a la **pellicule** de la timeline : l'interface a
+ * besoin d'une video qu'on peut deplacer dans le temps, alors qu'un flux HLS
+ * en direct ne se deplace pas. Le fichier vit dans un dossier temporaire et est
+ * supprime apres usage.
+ */
+export async function buildBufferClip(
+  settings: AppSettings,
+  streamPath: string,
+  logger: Logger,
+): Promise<ReplayClip> {
+  const segments = await segmentDurations(settings.replay.path, streamPath);
+  // Le dernier segment est en cours d'ecriture : on l'ecarte.
+  const usable = segments.slice(0, -1);
+  if (usable.length === 0) return { ok: false, message: 'Le tampon est vide.' };
+
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'streamcontrol-clip-'));
+  const target = path.join(directory, 'buffer.mp4');
+  const written = await concatFragmentedMp4Files(usable.map((segment) => segment.file), target);
+  if (!written) {
+    await fs.rm(directory, { recursive: true, force: true });
+    logger.warn('replay', `Segments illisibles pour /${streamPath}.`);
+    return { ok: false, message: 'Les segments memorises sont illisibles.' };
+  }
+  const seconds = Math.round(usable.reduce((sum, segment) => sum + segment.seconds, 0));
+  return { ok: true, file: target, directory, seconds, message: `${seconds} s` };
 }
 
 /**

@@ -539,6 +539,13 @@ export class ObsController extends EventEmitter {
    * l'ecran ; deux se partagent la largeur ; trois laissent la moitie basse au
    * troisieme ; quatre forment une grille 2x2.
    *
+   * Oui : une scene « split » contient bien une source PAR flux (jusqu'a 4).
+   * Chaque source est independante : on peut donc y poser a tout moment une
+   * autre source (par exemple une entree HDMI captee par OBS), la deplacer ou
+   * la remplacer, sans toucher aux autres cellules. StreamControl ne gere que
+   * ses propres sources (`StreamControl - <nom>`) : les sources etrangeres
+   * ajoutees a la main ne sont ni modifiees ni retirees.
+   *
    * Les sources de StreamControl qui ne sont plus utilisees sont retirees de
    * la scene, pour qu'une ancienne adresse ne reste pas affichee par erreur.
    */

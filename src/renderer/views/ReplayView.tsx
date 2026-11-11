@@ -5,6 +5,7 @@ import { useTranslation } from '../hooks/useTranslation';
 import { Icon } from '../components/Icon';
 import { Spinner } from '../components/Spinner';
 import { StreamPreview } from '../components/StreamPreview';
+import { ReplayFilmstrip } from '../components/ReplayFilmstrip';
 
 /**
  * Onglet Replay.
@@ -77,15 +78,28 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   // 32 s, et l'extrait etait plus court que voulu.
   const reachable = Math.max(available, minimum);
 
-  // Le remplissage reel grandit tant que le flux publie : la barre se remplit
-  // de la gauche (le plus ancien) vers la droite (le direct).
+  // Le direct est a DROITE, le plus ancien a GAUCHE. La memoire s'etend donc
+  // de la droite vers la gauche a mesure que le temps passe : le progress part
+  // du direct et recule vers la gauche, comme sur une barre de temps video.
   const pct = (seconds: number) => `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
-  // Position d'une seconde "en arriere" sur la barre : 0 (direct) est a DROITE.
-  const startLeft = `${Math.min(100, Math.max(0, ((memory - startAgo) / memory) * 100))}%`;
-  const endLeft = `${Math.min(100, Math.max(0, ((memory - endAgo) / memory) * 100))}%`;
-  // Curseur du direct : il avance de gauche a droite a mesure que le tampon se
-  // remplit, comme la tete de lecture d'un montage.
-  const liveLeft = pct(available);
+  const agoLeft = (seconds: number) =>
+    `${Math.min(100, Math.max(0, ((memory - seconds) / memory) * 100))}%`;
+  // Position d'une seconde "en arriere" : 0 s = tout a droite (direct).
+  const startLeft = agoLeft(startAgo);
+  const endLeft = agoLeft(endAgo);
+  // Remplissage : ancre au direct (a droite), il s'etend vers la gauche. Sa
+  // largeur est la memoire reelle, son bord gauche le moment le plus ancien.
+  const fillWidth = pct(available);
+  // Tete de lecture : elle marque le bord gauche du remplissage, donc elle
+  // avance de la droite vers la gauche.
+  const playheadLeft = agoLeft(available);
+
+  // Clip du tampon : video deplacable dans le temps (le direct HLS ne l'est
+  // pas). Il sert a l'apercu et a la pellicule.
+  const clipSrc = selected?.urls.replayClip ?? '';
+  // Position a montrer dans le clip : le clip finit au direct, donc « il y a
+  // startAgo secondes » correspond a `available - startAgo` depuis le debut.
+  const previewSeek = Math.max(0, available - startAgo);
 
   const wanted = Math.max(0, startAgo - endAgo);
 
@@ -239,12 +253,18 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
             <span className="replay-live-tag">{t('replay.axisLive')}</span>
           </div>
 
+          {/* Pellicule : une vignette par seconde, comme un montage video. */}
+          {clipSrc && available >= 1 ? (
+            <ReplayFilmstrip key={`${selectedId}-${Math.floor(available)}`} src={clipSrc} seconds={available} memory={memory} />
+          ) : null}
+
           <div className="replay-bar" ref={barRef}>
-            {/* Partie reellement memorisee : elle grandit de la gauche (le plus
-                ancien) vers la droite (le direct). */}
-            <div className="replay-bar-fill" style={{ width: pct(available) }} />
-            {/* Tete de lecture du direct : elle avance toute seule. */}
-            <div className="replay-playhead" style={{ left: liveLeft }} aria-hidden />
+            {/* Partie reellement memorisee : ancree au direct (a droite), elle
+                s'etend vers la gauche a mesure que le temps passe. */}
+            <div className="replay-bar-fill" style={{ width: fillWidth }} />
+            {/* Tete de lecture : bord gauche du remplissage, donc elle avance
+                de la droite vers la gauche. */}
+            <div className="replay-playhead" style={{ left: playheadLeft }} aria-hidden />
             {/* Selection entre les deux poignees. */}
             <div
               className="replay-bar-select"
@@ -273,10 +293,12 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           </div>
         </div>
 
-        {/* --- Apercu du direct -------------------------------------------- */}
+        {/* --- Apercu de la selection -------------------------------------- */}
+        {/* Le lecteur lit le clip du tampon : on peut donc s'y deplacer, et
+            l'apercu montre l'image au debut de la plage choisie. */}
         <div className="replay-preview">
-          {selected && selected.status.publishing ? (
-            <StreamPreview key={selected.id} src={selected.urls.hls} />
+          {clipSrc && available >= 1 ? (
+            <StreamPreview key={clipSrc} src={clipSrc} seekSeconds={previewSeek} />
           ) : (
             <div className="replay-preview-empty">{t('replay.previewNoLive')}</div>
           )}
