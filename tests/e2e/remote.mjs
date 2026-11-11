@@ -111,6 +111,11 @@ try {
   );
   // Le replay a la demande est propose quand il est autorise et actif.
   check('elle propose l extraction d un replay', pc.body.includes('Extraire un replay'));
+  // Meme systeme de timeline que sur le poste : une barre et deux poignees.
+  check(
+    'elle propose une barre de lecture a deux poignees',
+    pc.body.includes('replay-bar') && pc.body.includes('replay-handle-start') && pc.body.includes('replay-handle-end'),
+  );
 
   const phone = await request(`${base}/remote`, { headers: { 'User-Agent': PHONE_UA } });
   check('la page telephone est servie', phone.status === 200, `HTTP ${phone.status}`);

@@ -55,7 +55,27 @@ export interface PathRecordingOptions {
   recordFormat: string;
   recordSegmentDuration: string;
   recordDeleteAfter: string;
+  /** Duree d'une partie (fragment) fMP4 : c'est le RPO en cas de panne. */
+  recordPartDuration?: string;
 }
+
+/**
+ * Duree d'une partie fMP4, en secondes.
+ *
+ * C'est la quantite maximale perdue si le systeme s'arrete brutalement, mais
+ * aussi la granularite de l'enregistrement : un fragment est ecrit des qu'il est
+ * complet, donc l'enregistrement demarre et s'arrete au fragment pres. 200 ms
+ * rend le demarrage et la coupure quasi instantanes, tout en restant leger.
+ */
+const RECORD_PART_SECONDS = 0.2;
+
+/**
+ * Duree d'une partie fMP4, au format MediaMTX.
+ *
+ * Partages par l'enregistrement direct et le tampon de replay : c'est elle qui
+ * donne la granularite du demarrage et de l'arret.
+ */
+export const RECORD_PART_DURATION = `${RECORD_PART_SECONDS}s`;
 
 /** Duree de conservation au format MediaMTX, ou vide pour conserver toujours. */
 function retainDuration(hours: number): string {
@@ -79,6 +99,7 @@ export function buildPathOptions(
     recordFormat: recording.format,
     recordSegmentDuration: `${recording.segmentMinutes}m`,
     recordDeleteAfter: retainDuration(recording.retainHours),
+    recordPartDuration: RECORD_PART_DURATION,
   };
 }
 

@@ -228,11 +228,21 @@ function EndpointCard({
               t('action.watch')
             )}
           </button>
+          {/* Enregistrer suppose que le flux recoive quelque chose : sans
+              source qui publie, il n'y aurait rien a enregistrer. Le bouton
+              est donc desactive tant que le flux ne publie pas. */}
           <button
             type="button"
             className={`btn small${status.recording ? ' rec-on' : ' ghost'}`}
+            disabled={!status.recording && !status.publishing}
             onClick={() => void sc.setStreamRecording(endpoint.id, !status.recording)}
-            title={status.recording ? t('recording.stop') : t('recording.start')}
+            title={
+              status.recording
+                ? t('recording.stop')
+                : status.publishing
+                  ? t('recording.start')
+                  : t('recording.startNoSource')
+            }
           >
             <span className={`rec-dot${status.recording ? ' on' : ''}`} aria-hidden />
             {status.recording ? t('recording.stop') : t('recording.start')}

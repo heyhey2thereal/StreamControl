@@ -63,7 +63,20 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 - **Durée « 0:00 » dans le lecteur.** Le fichier de replay se lisait, mais le
   lecteur affichait 0:00 comme durée. L'en-tête du fichier gardait la durée d'un
   seul segment (la piste annonçait zéro) : il est maintenant réécrit avec la
-  durée totale.
+  durée totale. **Même correction pour les enregistrements** : MediaMTX les
+  écrit aussi avec une durée de piste à zéro, ce qui donnait « 00:00 » sur les
+  lecteurs de Windows.
+
+- **Enregistrement instantané, et sans perte.** L'enregistrement démarre en
+  moins d'une seconde (au lieu de 2 à 3 s) et s'arrête aussitôt : les fragments
+  sont écrits au fur et à mesure, sans attendre la fin du segment. La durée du
+  fichier correspond au temps enregistré — rien n'est perdu.
+
+- **Enregistrer un flux qui ne reçoit rien n'est plus possible.** Le bouton est
+  désactivé tant que le flux ne publie pas.
+
+- **Son de l'aperçu.** La page de lecture n'était plus audible : elle est
+  maintenant sonore, y compris dans l'aperçu du tableau de bord.
 
 - **Mémoire du replay : vider et arrondir.** Un bouton **Vider la mémoire**
   efface le tampon d'un flux (utile après une réinstallation, où des segments
@@ -74,6 +87,11 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 - **Barre de lecture en pleine largeur.** La barre du replay occupe toute la
   largeur, sous la liste des flux : elle reste lisible même avec 500 s de
   mémoire.
+
+- **Replay depuis un appareil.** La vue ordinateur du panneau distant utilise la
+  même barre de lecture à deux poignées que le poste. Le téléchargement
+  fonctionne désormais (il échouait avec « fichier non disponible »), et le
+  fichier porte le nom du flux.
 
 - **Replays rangés par flux.** Les replays sont écrits dans un sous-dossier
   portant le nom du flux, sous le dossier des replays.

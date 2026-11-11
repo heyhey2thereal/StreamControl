@@ -120,6 +120,9 @@ try {
   const player = await get(`http://127.0.0.1:${WEB_PAGES_PORT}/watch/cam1`);
   check('page servie', player.status === 200, `HTTP ${player.status}`);
   check('elle contient une video', player.body.includes('<video'));
+  // La video ne doit PAS etre « muted » : sinon le son du flux est muet, y
+  // compris dans l'apercu du tableau de bord (meme page).
+  check('la video n est pas coupee (son)', !/<video[^>]*\bmuted\b/.test(player.body), 'pas de muted');
   check('elle a un indicateur de chargement', player.body.includes('class="spinner"'));
   check('elle annonce l attente', player.body.includes('En attente'));
   // L'image ne doit JAMAIS etre etiree : sans object-fit, une camera 4/3 est

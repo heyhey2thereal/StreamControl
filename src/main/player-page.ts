@@ -169,7 +169,7 @@ export function renderPlayerPage(options: PlayerPageOptions): string {
 </header>
 <main>
   <div class="frame">
-    <video id="video" controls autoplay muted playsinline></video>
+    <video id="video" controls autoplay playsinline></video>
     <div class="overlay" id="overlay">
       <div class="spinner" id="spinner"></div>
       <div>

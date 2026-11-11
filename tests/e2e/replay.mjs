@@ -210,22 +210,31 @@ try {
   const remoteState = JSON.parse((await request(`${base}/remote/state`, { headers: authHeaders })).body);
   check('l etat porte les reglages du replay', remoteState.replay && remoteState.replay.enabled === true, JSON.stringify(remoteState.replay));
 
-  // Preparation de l'extrait.
+  // Preparation de l'extrait. Le nom du flux est transmis : il sert de nom de
+  // fichier au telechargement.
   const prepared = await request(`${base}/remote/replay`, {
     method: 'POST',
     headers: { ...authHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: target.id, fromSeconds: 10, toSeconds: 0 }),
+    body: JSON.stringify({ id: target.id, name: target.name, fromSeconds: 10, toSeconds: 0 }),
   });
   const preparedBody = JSON.parse(prepared.body);
   check('l appareil prepare un replay', preparedBody.ok === true && typeof preparedBody.url === 'string', prepared.body.slice(0, 120));
 
   // Telechargement : le corps est un MP4, et le fichier temporaire disparait.
-  const download = await request(`${base}${preparedBody.url}`, { headers: authHeaders });
+  // On telecharge SANS en-tete d'autorisation : c'est ce que fait la balise
+  // `download` d'un navigateur, et c'etait la cause du « fichier non
+  // disponible ». Le jeton d'URL, a usage unique, suffit.
+  const download = await request(`${base}${preparedBody.url}`);
   check('le telechargement renvoie un MP4', download.headers['content-type'] === 'video/mp4', String(download.headers['content-type']));
   check('le MP4 telecharge n est pas vide', download.body.length > 1000, `${download.body.length} octets`);
+  check(
+    'le telechargement porte le nom du flux',
+    /filename="Flux-principal_/.test(String(download.headers['content-disposition'])),
+    String(download.headers['content-disposition']),
+  );
 
   // Une seconde tentative sur le meme jeton echoue : le fichier a ete supprime.
-  const again = await request(`${base}${preparedBody.url}`, { headers: authHeaders });
+  const again = await request(`${base}${preparedBody.url}`);
   check('le replay est supprime apres telechargement', again.status === 404, `HTTP ${again.status}`);
 
   // Sans l'autorisation « download », le serveur refuse (403).

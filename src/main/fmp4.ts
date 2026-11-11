@@ -15,7 +15,7 @@
  * sequence et le temps de decodage cumule. Aucun reencodage : les octets video
  * sont recopies tels quels.
  */
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
 
 /** Une boite MP4 : son type et sa position dans le tampon. */
 interface Box {
@@ -240,6 +240,58 @@ function patchMoovDurations(
   }
 }
 
+/**
+ * Corrige les durees de l'en-tete d'un MP4 fragmente ecrit par MediaMTX.
+ *
+ * Les enregistrements directs de MediaMTX portent un en-tete dont `tkhd` et
+ * `mdhd` annoncent **zero** (seul `mvhd` est renseigne) : c'est ce qui fait
+ * afficher « 00:00 » aux lecteurs de Windows, alors que la lecture continue. On
+ * lit la duree reelle dans les fragments, puis on reecrit l'en-tete SUR PLACE.
+ *
+ * A appeler une fois le fichier clos.
+ *
+ * @returns vrai si l'en-tete a ete corrige.
+ */
+export function repairFmp4HeaderDurations(file: string): boolean {
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(file);
+  } catch {
+    return false;
+  }
+  const moov = findBox(buffer, 'moov');
+  if (!moov) return false;
+
+  const timescales = parseTrackTimescales(buffer);
+  if (timescales.size === 0) return false;
+
+  // Duree cumulee par piste, lue dans les fragments.
+  const running = new Map<number, bigint>();
+  for (const moof of listBoxes(buffer)) {
+    if (moof.type !== 'moof') continue;
+    for (const traf of childBoxes(buffer, moof)) {
+      if (traf.type !== 'traf') continue;
+      const children = childBoxes(buffer, traf);
+      const tfhd = children.find((entry) => entry.type === 'tfhd');
+      if (!tfhd) continue;
+      const trackId = tfhdTrackId(buffer, tfhd);
+      running.set(trackId, (running.get(trackId) ?? 0n) + trafDuration(buffer, traf));
+    }
+  }
+  if (running.size === 0) return false;
+
+  // `patchMoovDurations` ecrit dans le tampon recu : on lui passe la tranche
+  // du `moov`, a l'interieur du fichier.
+  patchMoovDurations(buffer.subarray(moov.start, moov.start + moov.size), running, timescales);
+
+  try {
+    writeFileSync(file, buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Base de temps par piste d'un en-tete fMP4, a partir des `tkhd` et `mdhd`. */
 function parseTrackTimescales(init: Buffer): Map<number, number> {
   const timescales = new Map<number, number>();
@@ -410,45 +462,102 @@ export function createFmp4Writer(): Fmp4WriterState {
 }
 
 /**
- * Prepare les octets a ajouter pour un segment.
- *
- * @returns les octets a ecrire, ou null si le segment n'apporte rien.
+ * Resultat d'un ajout incremental : les octets a ecrire et la position atteinte.
  */
-export function fmp4Append(state: Fmp4WriterState, segment: Buffer): Buffer | null {
+export interface Fmp4AppendResult {
+  chunk: Buffer;
+  consumed: number;
+}
+
+/**
+ * Prepare les octets a ajouter, a partir d'une position donnee.
+ *
+ * Le traitement se fait **fragment par fragment** (une paire `moof`+`mdat`),
+ * et non segment par segment : un segment MediaMTX contient plusieurs
+ * fragments, et le dernier est encore en cours d'ecriture. On peut donc ecrire
+ * les fragments deja complets sans attendre la fin du segment — c'est ce qui
+ * rend l'enregistrement quasi instantane, au demarrage comme a l'arret.
+ *
+ * @param buffer contenu du fichier de segment (peut grandir entre deux appels).
+ * @param from position deja traitee, toujours sur une frontiere de boite.
+ * @returns les octets a ajouter et la nouvelle position, ou null si rien de
+ *   nouveau n'est exploitable.
+ */
+export function fmp4Append(state: Fmp4WriterState, buffer: Buffer, from = 0): Fmp4AppendResult | null {
   const parts: Buffer[] = [];
-  for (const box of listBoxes(segment)) {
-    if (box.type === 'ftyp') {
-      if (!state.initWritten) parts.push(Buffer.from(segment.subarray(box.start, box.start + box.size)));
-      continue;
-    }
-    if (box.type === 'moov') {
+  // On parcourt TOUJOURS depuis le debut : l'en-tete d'initialisation (ftyp +
+  // moov) doit etre ecrit une fois, meme si l'on commence au milieu du fichier.
+  const boxes = listBoxes(buffer, 0, buffer.length);
+  let consumed = from;
+
+  for (let index = 0; index < boxes.length; index += 1) {
+    const box = boxes[index];
+
+    if (box.type === 'ftyp' || box.type === 'moov') {
       if (!state.initWritten) {
-        // On garde une copie modifiable du `moov` : ses durees seront corrigees
-        // a la finalisation, une fois la duree totale connue. On retient aussi
-        // sa position dans le bloc, pour pouvoir le corriger dans un fichier
-        // ecrit en flux (capture).
-        const moov = Buffer.from(segment.subarray(box.start, box.start + box.size));
-        state.initMoov = moov;
-        state.initOffset = parts.reduce((total, part) => total + part.length, 0);
-        state.timescales = parseTrackTimescales(moov);
-        parts.push(moov);
+        if (box.type === 'moov') {
+          // On garde une copie modifiable du `moov` : ses durees seront
+          // corrigees a la finalisation, une fois la duree totale connue. On
+          // retient aussi sa position, pour le corriger dans un fichier ecrit
+          // en flux.
+          const moov = Buffer.from(buffer.subarray(box.start, box.start + box.size));
+          state.initMoov = moov;
+          state.initOffset = parts.reduce((total, part) => total + part.length, 0);
+          state.timescales = parseTrackTimescales(moov);
+        }
+        parts.push(Buffer.from(buffer.subarray(box.start, box.start + box.size)));
       }
       continue;
     }
+
     if (box.type === 'moof') {
-      state.sequence += 1;
-      const moof = Buffer.from(segment.subarray(box.start, box.start + box.size));
-      rewriteMoof(moof, state.sequence, state.running);
-      parts.push(moof);
+      // On n'ecrit un fragment que lorsque son `mdat` est complet : un `moof`
+      // sans ses donnees donnerait un fichier tronque. Tant que le `mdat` n'est
+      // pas entier, on s'arrete ici et on reprendra au prochain passage.
+      const next = boxes[index + 1];
+      if (!next || next.type !== 'mdat') break;
+      // Fragment deja ecrit (avant la position de reprise) : on l'ignore.
+      if (box.start >= from) {
+        state.sequence += 1;
+        const moof = Buffer.from(buffer.subarray(box.start, box.start + box.size));
+        rewriteMoof(moof, state.sequence, state.running);
+        parts.push(moof);
+        parts.push(Buffer.from(buffer.subarray(next.start, next.start + next.size)));
+        consumed = next.start + next.size;
+      }
+      index += 1; // le mdat est traite avec le moof
       continue;
     }
-    if (box.type === 'mdat') {
-      parts.push(Buffer.from(segment.subarray(box.start, box.start + box.size)));
-    }
   }
+
   if (parts.length === 0) return null;
   state.initWritten = true;
-  return Buffer.concat(parts);
+  return { chunk: Buffer.concat(parts), consumed };
+}
+
+/**
+ * Position de fin du dernier fragment complet d'un segment fMP4.
+ *
+ * Sert a reprendre une lecture la ou l'ecriture s'etait arretee, sur une
+ * frontiere de fragment : un fichier relu a partir d'une position arbitraire
+ * (au milieu d'un `mdat`) donnerait des boites illisibles.
+ */
+export function lastCompleteFragmentEnd(buffer: Buffer): number {
+  const boxes = listBoxes(buffer, 0, buffer.length);
+  let end = 0;
+  for (let index = 0; index < boxes.length; index += 1) {
+    const box = boxes[index];
+    if (box.type === 'moof') {
+      const next = boxes[index + 1];
+      if (next && next.type === 'mdat') {
+        end = next.start + next.size;
+        index += 1;
+      }
+    } else if (box.type === 'ftyp' || box.type === 'moov') {
+      if (box.start + box.size > end) end = box.start + box.size;
+    }
+  }
+  return end;
 }
 
 /**
@@ -473,8 +582,8 @@ export function concatFragmentedMp4(segments: Buffer[]): Buffer | null {
   const state = createFmp4Writer();
   const parts: Buffer[] = [];
   for (const segment of segments) {
-    const chunk = fmp4Append(state, segment);
-    if (chunk) parts.push(chunk);
+    const result = fmp4Append(state, segment);
+    if (result) parts.push(result.chunk);
   }
   if (!state.initWritten || parts.length === 0) return null;
   // La duree totale n'est connue qu'ici : on corrige alors l'en-tete. Le

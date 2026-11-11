@@ -96,9 +96,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
     replay: t('remote.replay'),
     replayTitle: t('remote.replayTitle'),
     replayHint: t('remote.replayHint'),
-    replayFrom: t('remote.replayFrom'),
-    replayTo: t('remote.replayTo'),
-    replayMemory: t('remote.replayMemory'),
+    replayOldest: t('remote.replayOldest'),
+    replayLive: t('remote.replayLive'),
+    replayWanted: t('remote.replayWanted'),
     replayWhole: t('remote.replayWhole'),
     replaySave: t('remote.replaySave'),
     replayBusy: t('remote.replayBusy'),
@@ -201,6 +201,24 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   .replay-fields input { font:inherit; background:#0f1216; color:#e9ecef; height:42px;
                          border:1px solid #2c3037; border-radius:9px; padding:0 11px; }
   .modal-actions { display:flex; gap:9px; justify-content:flex-end; margin-top:12px; }
+  /* Barre de lecture du replay : memes reperes que sur le poste (memoire a
+     gauche, direct a droite), avec deux poignees deplacables. */
+  .replay-axis { display:flex; justify-content:space-between; font-size:11px;
+                 color:#8b929a; margin:10px 0 6px; }
+  .replay-live-tag { color:var(--err); font-weight:700; letter-spacing:.04em; }
+  .replay-bar { position:relative; height:40px; border-radius:8px; background:#0f1216;
+                border:1px solid #2c3037; cursor:pointer; touch-action:none; }
+  .replay-bar-select { position:absolute; top:0; bottom:0;
+                       background:rgba(78,168,222,.25);
+                       border-top:2px solid var(--accent); border-bottom:2px solid var(--accent); }
+  .replay-handle { position:absolute; top:-6px; bottom:-6px; width:16px; margin-left:-8px;
+                   padding:0; border-radius:6px; border:2px solid var(--accent);
+                   background:var(--accent); cursor:ew-resize; }
+  .replay-handle-label { position:absolute; top:-20px; left:50%; transform:translateX(-50%);
+                         font-size:10.5px; font-weight:700; color:var(--accent); white-space:nowrap;
+                         background:#14171b; padding:1px 5px; border-radius:4px; }
+  .replay-summary { display:flex; align-items:center; justify-content:space-between;
+                    gap:10px; margin-top:12px; font-size:12.5px; color:#a8b0b8; }
 </style></head>
 <body>
 <header>
@@ -215,14 +233,19 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
 <div class="modal" id="replay-modal">
   <div class="modal-card">
     <h3 id="replay-title"></h3>
-    <div class="meta" id="replay-memory"></div>
     <div class="hint" id="replay-hint"></div>
-    <div class="replay-fields">
-      <label>${escapeHtml(t('remote.replayFrom'))}
-        <input type="number" id="replay-from" min="0" step="1" value="0"></label>
-      <label>${escapeHtml(t('remote.replayTo'))}
-        <input type="number" id="replay-to" min="0" step="1" value="0"></label>
+    <div class="replay-axis">
+      <span id="replay-oldest"></span>
+      <span class="replay-live-tag" id="replay-live"></span>
     </div>
+    <div class="replay-bar" id="replay-bar">
+      <div class="replay-bar-select" id="replay-select"></div>
+      <button type="button" class="replay-handle" id="replay-handle-start">
+        <span class="replay-handle-label" id="replay-label-start"></span></button>
+      <button type="button" class="replay-handle" id="replay-handle-end">
+        <span class="replay-handle-label" id="replay-label-end"></span></button>
+    </div>
+    <div class="replay-summary" id="replay-summary"></div>
     <div class="modal-actions">
       <button id="replay-whole" type="button"></button>
       <button id="replay-cancel" type="button">${escapeHtml(t('action.cancel'))}</button>
@@ -734,42 +757,101 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
 
   // --- Replay a la demande -----------------------------------------------
   //
-  // L'extrait est assemble par le poste, puis telecharge ici. Rien n'est ecrit
-  // sur le poste central : le fichier y est prepare dans un dossier temporaire,
-  // telecharge, puis supprime.
+  // Meme barre de lecture que sur le poste : la memoire a gauche, le direct a
+  // droite, et deux poignees deplacables (debut et fin). L'extrait est assemble
+  // par le poste, puis telecharge ici : rien n'est ecrit sur le poste central.
   var replayTarget = null;
+  var replayMemory = 0;
+  var replayStart = 0; // secondes en arriere (debut)
+  var replayEnd = 0;   // secondes en arriere (fin)
+  var replayDrag = null;
+
+  function replayPct(seconds) {
+    return Math.min(100, Math.max(0, (seconds / (replayMemory || 1)) * 100));
+  }
+
+  function renderReplayBar() {
+    var startLeft = replayPct(replayMemory - replayStart);
+    var endLeft = replayPct(replayMemory - replayEnd);
+    document.getElementById('replay-handle-start').style.left = startLeft + '%';
+    document.getElementById('replay-handle-end').style.left = endLeft + '%';
+    document.getElementById('replay-label-start').textContent = replayStart + 's';
+    document.getElementById('replay-label-end').textContent = replayEnd + 's';
+    var select = document.getElementById('replay-select');
+    select.style.left = startLeft + '%';
+    select.style.right = (100 - endLeft) + '%';
+    var wanted = Math.max(0, replayStart - replayEnd);
+    document.getElementById('replay-summary').textContent =
+      L.replayWanted.replace('{seconds}', String(wanted));
+  }
+
+  function replaySecondsFromClientX(clientX) {
+    var bar = document.getElementById('replay-bar');
+    var rect = bar.getBoundingClientRect();
+    var ratio = (clientX - rect.left) / rect.width;
+    ratio = Math.min(1, Math.max(0, ratio));
+    return Math.round((1 - ratio) * replayMemory);
+  }
 
   function openReplayModal(id, name) {
     if (!state || !state.replay || !state.replay.enabled) { toast(L.replayDisabled, true); return; }
     replayTarget = { id: id, name: name };
-    var memory = state.replay.bufferSeconds || 0;
+    replayMemory = state.replay.bufferSeconds || 0;
+    replayStart = replayMemory;
+    replayEnd = 0;
     document.getElementById('replay-title').textContent = L.replayTitle + (name ? ' - ' + name : '');
-    document.getElementById('replay-memory').textContent = L.replayMemory.replace('{seconds}', String(memory));
     document.getElementById('replay-hint').textContent = L.replayHint;
+    document.getElementById('replay-oldest').textContent =
+      L.replayOldest.replace('{seconds}', String(replayMemory));
+    document.getElementById('replay-live').textContent = L.replayLive;
     document.getElementById('replay-whole').textContent = L.replayWhole;
     document.getElementById('replay-go').textContent = L.replaySave;
-    document.getElementById('replay-from').value = String(memory);
-    document.getElementById('replay-to').value = '0';
+    renderReplayBar();
     document.getElementById('replay-modal').classList.add('open');
   }
 
   function closeReplayModal() {
     replayTarget = null;
+    replayDrag = null;
     document.getElementById('replay-modal').classList.remove('open');
   }
 
+  document.getElementById('replay-handle-start').addEventListener('pointerdown', function (e) {
+    replayDrag = 'start'; e.preventDefault();
+  });
+  document.getElementById('replay-handle-end').addEventListener('pointerdown', function (e) {
+    replayDrag = 'end'; e.preventDefault();
+  });
+  document.getElementById('replay-bar').addEventListener('pointerdown', function (e) {
+    if (e.target.classList.contains('replay-handle')) return;
+    var value = replaySecondsFromClientX(e.clientX);
+    // Un clic sur la barre deplace la poignee la plus proche.
+    if (Math.abs(value - replayStart) <= Math.abs(value - replayEnd)) replayStart = Math.max(replayEnd, value);
+    else replayEnd = Math.min(replayStart, value);
+    renderReplayBar();
+  });
+  window.addEventListener('pointermove', function (e) {
+    if (!replayDrag) return;
+    var value = replaySecondsFromClientX(e.clientX);
+    if (replayDrag === 'start') replayStart = Math.max(replayEnd, Math.min(replayMemory, value));
+    else replayEnd = Math.max(0, Math.min(replayStart, value));
+    renderReplayBar();
+  });
+  window.addEventListener('pointerup', function () { replayDrag = null; });
+
   function submitReplay() {
     if (!replayTarget) return;
-    var from = Number.parseInt(document.getElementById('replay-from').value, 10);
-    var to = Number.parseInt(document.getElementById('replay-to').value, 10);
-    if (!isFinite(from)) from = 0;
-    if (!isFinite(to)) to = 0;
     var go = document.getElementById('replay-go');
     go.disabled = true;
     toast(L.replayBusy);
     api('/remote/replay', {
       method: 'POST',
-      body: JSON.stringify({ id: replayTarget.id, fromSeconds: from, toSeconds: to }),
+      body: JSON.stringify({
+        id: replayTarget.id,
+        name: replayTarget.name,
+        fromSeconds: replayStart,
+        toSeconds: replayEnd,
+      }),
     })
       .then(function (result) {
         go.disabled = false;
@@ -777,15 +859,15 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
           toast((result && result.message) || L.replayFailed, true);
           return;
         }
-        closeReplayModal();
         // On declenche le telechargement : le navigateur range le fichier dans
-        // son dossier Telechargements.
+        // son dossier Telechargements. Le nom vient du poste (nom du flux).
         var a = document.createElement('a');
         a.href = result.url;
-        a.download = safeName(replayTarget ? replayTarget.name : 'replay') + '.mp4';
+        a.download = (result.name ? safeName(result.name) : 'replay') + '.mp4';
         document.body.appendChild(a);
         a.click();
         a.remove();
+        closeReplayModal();
         toast(L.replayDone);
       })
       .catch(function () {
@@ -797,9 +879,9 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   document.getElementById('replay-go').addEventListener('click', submitReplay);
   document.getElementById('replay-cancel').addEventListener('click', closeReplayModal);
   document.getElementById('replay-whole').addEventListener('click', function () {
-    var memory = (state && state.replay && state.replay.bufferSeconds) || 0;
-    document.getElementById('replay-from').value = String(memory);
-    document.getElementById('replay-to').value = '0';
+    replayStart = replayMemory;
+    replayEnd = 0;
+    renderReplayBar();
   });
   document.getElementById('replay-modal').addEventListener('click', function (event) {
     if (event.target === document.getElementById('replay-modal')) closeReplayModal();

@@ -19,6 +19,7 @@ import { DiagnosticsTracker } from './diagnostics';
 import { CHANNELS } from '../shared/channels';
 import type { AppSettings } from '../shared/types';
 import { resolveRecordingDir } from './recording';
+import { RecordingRepairer } from './recording-repair';
 import { replayBufferDir } from './replay';
 import { resolveStorageDir } from './storage';
 import { readSoundFile } from './sound';
@@ -185,6 +186,16 @@ const webPages = new WebPagesServer({
 // rafraichissement, sans rien modifier.
 const watcher = new StreamWatcher(logger, settings);
 const diagnostics = new DiagnosticsTracker();
+
+// Repare les durees des enregistrements directs de MediaMTX, dont l'en-tete
+// annonce zero (`tkhd` et `mdhd`) : sans cela, les lecteurs de Windows
+// affichent « 00:00 » alors que la lecture continue.
+const recordingRepair = new RecordingRepairer(logger, () =>
+  resolveRecordingDir(settings.get().recording.path),
+);
+const repairTimer = setInterval(() => void recordingRepair.sweep(), 20_000);
+repairTimer.unref?.();
+setTimeout(() => void recordingRepair.sweep(), 5_000).unref?.();
 
 // Automatisation : macros et conducteur de spectacle. Les actions passent par
 // les controleurs existants, jamais directement par le systeme.

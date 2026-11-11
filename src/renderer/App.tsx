@@ -270,7 +270,7 @@ function Shell({ sc }: { sc: StreamControl }) {
         {view === 'automation' ? <AutomationView sc={sc} /> : null}
         {view === 'replay' ? <ReplayView sc={sc} /> : null}
         {view === 'remote' ? <RemoteView sc={sc} /> : null}
-        {view === 'analysis' ? <AnalysisView sc={sc} /> : null}
+        {view === 'analysis' ? <AnalysisView /> : null}
         {view === 'logs' ? <LogsView sc={sc} /> : null}
         {view === 'settings' ? <SettingsView sc={sc} onOpenLock={() => setLockDialogOpen(true)} /> : null}
         {view === 'guide' ? <GuideView sc={sc} /> : null}

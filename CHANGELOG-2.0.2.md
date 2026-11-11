@@ -157,23 +157,76 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 - Fichiers : `src/renderer/views/ReplayView.tsx`,
   `src/renderer/styles/global.css`.
 
-## 12. Tests
+## 12. Replay depuis un appareil : meme barre de lecture que le poste
+- Le panneau distant (vue ordinateur) utilise desormais la **meme barre de
+  lecture** que le poste : la memoire a gauche, le direct a droite, et deux
+  **poignees deplacables** (debut et fin) au lieu de deux champs numeriques.
+- **Telechargement corrige** : la balise `download` d'un navigateur ne peut pas
+  envoyer d'en-tete d'autorisation ; le fichier est desormais servi sur le jeton
+  d'URL (a usage unique), sans en-tete. Le fichier porte le **nom du flux** au
+  lieu d'un « replay.mp4 » anonyme.
+- Fichiers : `src/main/remote-desktop-page.ts`, `src/main/web-pages.ts`,
+  `src/shared/i18n.ts`.
+
+## 13. Enregistrement : demarrage et coupure instantanes, sans perte
+- **Demarrage immediat** : la capture assemble les fragments **au fur et a
+  mesure** (`moof`+`mdat` complets), sans attendre la fin du segment. Un
+  enregistrement demarre en moins d'une seconde, et non 2 a 3 s plus tard.
+- **Coupure immediate** : l'arret ecrit tout ce qui est complet et s'arrete la,
+  sans attendre le segment en cours.
+- **Aucune perte** : la duree du fichier correspond au temps d'enregistrement.
+  Verifie : 8 s enregistrees -> 8,4 s de fichier.
+- Le fragment (`recordPartDuration`) passe a **200 ms** : la granularite du
+  demarrage et de l'arret, et ce qui serait perdu en cas de panne.
+- Fichiers : `src/main/capture.ts`, `src/main/fmp4.ts`, `src/main/recording.ts`,
+  `src/main/replay.ts`.
+
+## 14. « 00:00 » sur les lecteurs Windows : enregistrements et replays
+- **Cause** : MediaMTX ecrit ses enregistrements (et ses segments de replay)
+  avec un en-tete dont `tkhd` et `mdhd` annoncent **zero** ; seul `mvhd` est
+  renseigne. Les lecteurs de Windows affichent alors « 00:00 » comme duree,
+  alors que la lecture continue.
+- **Correction** : l'en-tete est reecrit avec la duree totale, lue dans les
+  fragments — pour les replays assembles (`fmp4.ts`), et pour les
+  enregistrements directs de MediaMTX, reparés peu apres leur fermeture
+  (`recording-repair.ts`).
+- Fichiers : `src/main/fmp4.ts`, `src/main/recording-repair.ts`,
+  `src/main/main.ts`.
+
+## 15. Divers
+- **Enregistrer un flux qui ne recoit rien** est desormais impossible : le
+  bouton est desactive tant que le flux ne publie pas.
+- **« Replay instantane » retire de l'onglet Analyse** : l'onglet Replay le
+  remplace.
+- **Son de l'apercu** : la page de lecture n'est plus `muted` ; le son du flux
+  s'entend donc dans l'apercu du tableau de bord (et dans la fenetre de lecture).
+- Fichiers : `src/renderer/views/StreamsView.tsx`,
+  `src/renderer/views/AnalysisView.tsx`, `src/main/player-page.ts`,
+  `src/shared/i18n.ts`.
+
+## 16. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
   lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, replay
-  demande depuis un appareil (preparation, telechargement MP4, suppression,
-  403 sans autorisation), vidage de la memoire.
+  demande depuis un appareil (preparation, telechargement MP4 **sans en-tete
+  d'autorisation**, nom de fichier, suppression, 403 sans autorisation), vidage
+  de la memoire.
+- `tests/e2e/recording.mjs` : demarrage de l'enregistrement en moins de 3 s,
+  duree du fichier conforme au temps enregistre (sans perte), duree non nulle.
+- `tests/e2e/player.mjs` : son de l'apercu (video non `muted`).
 - `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
   autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
-  grille, presence du replay.
+  grille, barre de lecture du replay a deux poignees.
 - `tests/e2e/obs.mjs` : parametre unique par source, resolution par cellule,
   flux desactive masque dans OBS.
 - `tests/e2e/player.mjs` : ecran « pas de flux » (message avec variable
   resolue, fond personnalise, mode noir).
 - `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
   de temps par piste), **duree totale annoncee par l'en-tete assemble**,
-  selection d'une plage de replay, reglages de replay bornes.
+  **lecture d'un segment en plusieurs fois sans perte**, **reparation de la
+  duree d'un enregistrement direct**, selection d'une plage de replay, reglages
+  de replay bornes.
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **44 tests unitaires · 494 verifications e2e · 0 echec.**
+Chiffres : **46 tests unitaires · 500 verifications e2e · 0 echec.**
 

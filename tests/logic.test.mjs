@@ -1046,3 +1046,150 @@ test('les reglages de replay sont valides et bornes', () => {
   assert.ok(clean.replay.minimumSeconds <= clean.replay.bufferSeconds, 'minimum <= memoire');
   assert.equal(clean.replay.outputPath, '', 'dossier vide par defaut');
 });
+
+/**
+ * L'enregistrement lit un segment **en plusieurs fois**, sans rien perdre.
+ *
+ * C'est ce qui rend l'enregistrement quasi instantane : on ecrit chaque paire
+ * `moof`+`mdat` des qu'elle est complete, sans attendre la fin du segment. Un
+ * segment relu plus tard doit reprendre a la position deja traitee, et le
+ * fichier final doit contenir exactement les memes fragments qu'une lecture
+ * d'un seul coup.
+ */
+test('l enregistrement lit un segment en plusieurs fois sans rien perdre', () => {
+  const { createFmp4Writer, fmp4Append, fmp4Finalize, concatFragmentedMp4 } = require('../dist-electron/main/fmp4.js');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  const tfhd = box('tfhd', Buffer.from([2, 0, 0, 0, 0, 0, 0, 1]));
+  const fragment = () => {
+    const trunBody = Buffer.alloc(4 + 4 + 8);
+    trunBody.writeUInt32BE(0x000300, 0);
+    trunBody.writeUInt32BE(1, 4);
+    trunBody.writeUInt32BE(1000, 8);
+    trunBody.writeUInt32BE(100, 12);
+    const traf = box('traf', Buffer.concat([tfhd, box('trun', trunBody)]));
+    return Buffer.concat([box('moof', Buffer.concat([box('mfhd', Buffer.alloc(8)), traf])), box('mdat', Buffer.alloc(32))]);
+  };
+
+  // Un segment : en-tete (ftyp + moov) suivi de trois fragments.
+  const moov = box('moov', Buffer.alloc(12, 0));
+  const segment = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), moov, fragment(), fragment(), fragment()]);
+
+  // Lecture d'un seul coup : reference.
+  const whole = concatFragmentedMp4([segment]);
+  assert.ok(whole, 'la lecture d un coup doit produire un fichier');
+
+  // Lecture en plusieurs fois : on decoupe le segment apres l'en-tete (la
+  // premiere lecture part toujours de 0 et emporte ftyp + moov d'un coup),
+  // puis a des positions volontairement « sales » (au milieu des fragments).
+  const headerSize = box('ftyp', Buffer.alloc(8, 0)).length + moov.length;
+  const state = createFmp4Writer();
+  const parts = [];
+  let from = 0;
+  for (const cut of [headerSize + 4, headerSize + 40, headerSize + 90, segment.length]) {
+    const slice = segment.subarray(0, cut);
+    const result = fmp4Append(state, slice, from);
+    if (result) {
+      parts.push(result.chunk);
+      from = result.consumed;
+    }
+  }
+  fmp4Finalize(state);
+  if (state.initMoov && parts[0]) state.initMoov.copy(parts[0], state.initOffset);
+  const partial = Buffer.concat(parts);
+
+  // Le fichier obtenu doit etre identique a la lecture d'un seul coup.
+  assert.equal(partial.length, whole.length, 'meme taille');
+  assert.ok(partial.equals(whole), 'contenu identique');
+});
+
+/**
+ * Un enregistrement direct de MediaMTX est repare : sa duree n'est plus zero.
+ *
+ * MediaMTX ecrit ses enregistrements avec `tkhd` et `mdhd` a zero, ce qui fait
+ * afficher « 00:00 » aux lecteurs de Windows. `repairFmp4HeaderDurations` relit
+ * la duree dans les fragments et reecrit l'en-tete sur place.
+ */
+test('la duree d un enregistrement direct est reparee', () => {
+  const { repairFmp4HeaderDurations } = require('../dist-electron/main/fmp4.js');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const nodePath = require('node:path');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  // En-tete facon MediaMTX : mvhd renseigne (2 s), tkhd et mdhd a ZERO.
+  const mvhdBody = Buffer.alloc(4 + 8 + 4 + 4);
+  mvhdBody.writeUInt32BE(1000, 12); // timescale
+  mvhdBody.writeUInt32BE(2000, 16); // duration (2 s)
+  const tkhdBody = Buffer.alloc(4 + 8 + 4 + 4 + 4);
+  tkhdBody.writeUInt32BE(1, 12); // track_ID
+  tkhdBody.writeUInt32BE(0, 20); // duration = 0 (le defaut)
+  const mdhdBody = Buffer.alloc(4 + 8 + 4 + 4);
+  mdhdBody.writeUInt32BE(90000, 12); // timescale
+  mdhdBody.writeUInt32BE(0, 16);     // duration = 0
+  const trak = box('trak', Buffer.concat([box('tkhd', tkhdBody), box('mdia', box('mdhd', mdhdBody))]));
+  const moov = box('moov', Buffer.concat([box('mvhd', mvhdBody), trak]));
+
+  // Trois fragments de 1 s chacun (2 images de 45000 a 90000 unites/s).
+  const tfhd = box('tfhd', Buffer.from([2, 0, 0, 0, 0, 0, 0, 1]));
+  const fragment = () => {
+    const trunBody = Buffer.alloc(4 + 4 + 2 * 8);
+    trunBody.writeUInt32BE(0x000300, 0);
+    trunBody.writeUInt32BE(2, 4);
+    trunBody.writeUInt32BE(45000, 8);
+    trunBody.writeUInt32BE(100, 12);
+    trunBody.writeUInt32BE(45000, 16);
+    trunBody.writeUInt32BE(100, 20);
+    const traf = box('traf', Buffer.concat([tfhd, box('trun', trunBody)]));
+    return Buffer.concat([box('moof', Buffer.concat([box('mfhd', Buffer.alloc(8)), traf])), box('mdat', Buffer.alloc(16))]);
+  };
+  const file = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), moov, fragment(), fragment(), fragment()]);
+
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sc-repair-'));
+  const target = nodePath.join(dir, 'recording.mp4');
+  fs.writeFileSync(target, file);
+
+  assert.equal(repairFmp4HeaderDurations(target), true, 'la reparation doit reussir');
+
+  const repaired = fs.readFileSync(target);
+  // On localise les boites plutot que de calculer des offsets a la main.
+  const readBox = (buffer, start, end) => {
+    const boxes = [];
+    let offset = start;
+    while (offset + 8 <= end) {
+      const size = buffer.readUInt32BE(offset);
+      const type = buffer.toString('latin1', offset + 4, offset + 8);
+      if (size < 8 || offset + size > end) break;
+      boxes.push({ type, start: offset, size });
+      offset += size;
+    }
+    return boxes;
+  };
+  const moovBox = readBox(repaired, 0, repaired.length).find((b) => b.type === 'moov');
+  const children = readBox(repaired, moovBox.start + 8, moovBox.start + moovBox.size);
+  const mvhd = children.find((b) => b.type === 'mvhd');
+  const movieTimescale = repaired.readUInt32BE(mvhd.start + 8 + 12);
+  const movieDuration = repaired.readUInt32BE(mvhd.start + 8 + 16);
+  assert.equal(movieDuration / movieTimescale, 3, 'mvhd = 3 s');
+
+  const trakBox2 = children.find((b) => b.type === 'trak');
+  const tkhd = readBox(repaired, trakBox2.start + 8, trakBox2.start + trakBox2.size).find((b) => b.type === 'tkhd');
+  const trackDuration = repaired.readUInt32BE(tkhd.start + 8 + 20);
+  assert.equal(trackDuration / movieTimescale, 3, 'tkhd = 3 s (et non 0)');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});

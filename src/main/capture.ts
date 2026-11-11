@@ -10,20 +10,26 @@
  * l'utilisateur n'a pas arrete. Le tampon reste court (quelques secondes), et
  * les segments sont petits : le traitement est immediat.
  *
- * Le fichier produit est un **MP4** : les segments fMP4 du tampon sont
- * rassembles par `fmp4.ts` (temps de decodage cumule, numero de sequence
- * reecrit). Une simple copie ne suffirait pas, chaque segment redemarrant son
- * temps a zero.
+ * L'assemblage se fait **fragment par fragment** (`moof`+`mdat`), des qu'un
+ * fragment est complet : l'enregistrement commence donc tout de suite, et
+ * s'arrete tout de suite, sans attendre la fin du segment en cours. Le fichier
+ * produit est un **MP4** lisible, duree corrigee (voir `fmp4.ts`).
  */
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from './logger';
 import { listBufferSegments, replayBufferDir, replayOutputDir } from './replay';
-import { createFmp4Writer, fmp4Append, fmp4Finalize, type Fmp4WriterState } from './fmp4';
+import { createFmp4Writer, fmp4Append, fmp4Finalize, lastCompleteFragmentEnd, type Fmp4WriterState } from './fmp4';
 
-/** Intervalle de surveillance du tampon, en millisecondes. */
-const POLL_MS = 1000;
+/**
+ * Intervalle de surveillance du tampon, en millisecondes.
+ *
+ * Court volontairement : c'est lui qui borne le retard entre le clic et le
+ * debut reel de l'ecriture (et inversement a l'arret). Un cycle long ferait
+ * perdre une seconde au demarrage et a la coupure.
+ */
+const POLL_MS = 200;
 
 /** Une capture en cours pour un flux. */
 interface Capture {
@@ -31,8 +37,14 @@ interface Capture {
   streamPath: string;
   /** Fichier definitif en cours d'ecriture. */
   target: string;
-  /** Segments deja recopies (par nom), pour ne jamais ecrire deux fois. */
-  copied: Set<string>;
+  /**
+   * Position deja traitee dans chaque segment, par nom de fichier.
+   *
+   * Un segment est lu **en plusieurs fois** : on n'ecrit que les fragments
+   * complets, puis on reprend la ou on s'etait arrete. C'est ce qui permet de
+   * demarrer sans attendre la fin du segment, et de ne rien perdre.
+   */
+  offsets: Map<string, number>;
   /** Handle du fichier ouvert en ajout. */
   handle: fs.FileHandle | null;
   /** Etat d'assemblage fMP4 (numero de sequence, temps cumule). */
@@ -40,6 +52,8 @@ interface Capture {
   timer: NodeJS.Timeout | null;
   startedAt: number;
   bytes: number;
+  /** Vrai pendant un passage : evite deux traitements concurrents. */
+  draining: boolean;
 }
 
 /** Nom de fichier lisible, a partir du nom du flux. */
@@ -98,24 +112,42 @@ export class CaptureManager extends EventEmitter {
       streamId,
       streamPath,
       target,
-      copied: new Set(),
+      offsets: new Map(),
       handle: await fs.open(target, 'w'),
       writer: createFmp4Writer(),
       timer: null,
       startedAt: Date.now(),
       bytes: 0,
+      draining: false,
     };
 
-    // On ignore le tampon deja present : « enregistrer » veut dire a partir de
-    // maintenant. Le replay, lui, sert justement a recuperer le passe.
+    // On reprend chaque segment existant **sur une frontiere de fragment** :
+    // tout ce qui precede est deja ecrit et clos. Le prochain fragment complet
+    // (moins d'une seconde plus tard, avec des parties de 200 ms) est le premier
+    // enregistre : le demarrage est quasi immediat, et il n'inclut pas les
+    // secondes de tampon qui precedent le clic.
     for (const segment of await listBufferSegments(this.getBufferDir(), streamPath)) {
-      capture.copied.add(path.basename(segment));
+      try {
+        const size = (await fs.stat(segment)).size;
+        const head = Buffer.alloc(Math.min(size, 512 * 1024));
+        const handle = await fs.open(segment, 'r');
+        try {
+          await handle.read(head, 0, head.length, 0);
+        } finally {
+          await handle.close();
+        }
+        capture.offsets.set(path.basename(segment), Math.max(lastCompleteFragmentEnd(head), 0));
+      } catch {
+        capture.offsets.set(path.basename(segment), 0);
+      }
     }
 
+    this.captures.set(streamId, capture);
+    // Un premier passage immediat : l'ecriture commence sans attendre un cycle.
+    await this.drain(capture);
     capture.timer = setInterval(() => void this.drain(capture), POLL_MS);
     capture.timer.unref?.();
 
-    this.captures.set(streamId, capture);
     this.logger.info('capture', `Capture demarree : ${target}`);
     this.emit('changed');
     return target;
@@ -133,9 +165,11 @@ export class CaptureManager extends EventEmitter {
     if (capture.timer) clearInterval(capture.timer);
     capture.timer = null;
 
-    // Dernier passage. Le segment en cours est volontairement ecarte : le flux
-    // publie encore, donc MediaMTX est en train de l'ecrire. Le lire donnerait
-    // un fichier corrompu. On perd au plus un segment (2 s), jamais l'integrite.
+    // Dernier passage immediat : on ecrit tous les fragments complets depuis le
+    // cycle precedent. On n'attend PAS le fragment en cours (il se clora 200 ms
+    // plus tard) : l'attendre ferait enregistrer du son et de l'image apres le
+    // clic d'arret. On perd donc au plus un fragment (200 ms), jamais une
+    // seconde, et la coupure est immediate.
     await this.drain(capture);
     // La duree totale n'est connue qu'ici : on corrige l'en-tete deja ecrit,
     // sinon le lecteur annonce « 0:00 » comme duree du fichier.
@@ -170,36 +204,56 @@ export class CaptureManager extends EventEmitter {
   }
 
   /**
-   * Ajoute au fichier definitif les segments pas encore traites.
+   * Ajoute au fichier definitif les fragments completes depuis le dernier cycle.
    *
-   * Le segment le plus recent est ecarte : MediaMTX est en train de l'ecrire,
-   * et le lire maintenant donnerait un fichier corrompu (macroblocs invalides).
-   * Il sera traite au passage suivant, une fois clos.
+   * Chaque segment est lu **a partir de la position deja traitee** : on ecrit
+   * les paires `moof`+`mdat` completes, puis on s'arrete des qu'une paire est
+   * incomplete (le `mdat` du dernier fragment est encore en cours d'ecriture).
+   * Le segment n'est donc jamais attendu en entier : l'enregistrement commence
+   * et s'arrete sans delai, et rien n'est perdu — le reste sera lu au passage
+   * suivant, y compris apres l'arret.
    *
-   * Chaque segment fMP4 est assemble par `fmp4Append` : on n'ecrit qu'un seul
-   * en-tete d'initialisation (celui du premier segment), et les fragments
-   * voient leur temps de decodage cumule et leur numero de sequence reecrits.
-   * Recopier les segments tels quels donnerait un MP4 que le lecteur ne joue
-   * qu'en partie (chaque fragment redemarre son temps a zero).
+   * `fmp4Append` garantit un seul en-tete d'initialisation, des temps de
+   * decodage cumules et des numeros de sequence croissants.
    */
   private async drain(capture: Capture): Promise<void> {
-    if (!capture.handle) return;
-    const segments = await listBufferSegments(this.getBufferDir(), capture.streamPath);
-    for (const segment of segments.slice(0, -1)) {
-      const name = path.basename(segment);
-      if (capture.copied.has(name)) continue;
-      try {
-        const data = await fs.readFile(segment);
-        const chunk = fmp4Append(capture.writer, data);
-        if (chunk && chunk.length > 0) {
-          await capture.handle.write(chunk);
-          capture.bytes += chunk.length;
+    if (!capture.handle || capture.draining) return;
+    capture.draining = true;
+    try {
+      const segments = await listBufferSegments(this.getBufferDir(), capture.streamPath);
+      for (const segment of segments) {
+        const name = path.basename(segment);
+        const from = capture.offsets.get(name) ?? 0;
+        let size: number;
+        try {
+          size = (await fs.stat(segment)).size;
+        } catch {
+          continue; // Segment purge entre le listage et la lecture.
         }
-        capture.copied.add(name);
-      } catch {
-        // Segment disparu entre le listage et la lecture : il sera repris au
-        // prochain passage s'il est encore la, sinon tant pis.
+        if (size <= from) continue; // Rien de nouveau.
+
+        let data: Buffer;
+        try {
+          const handle = await fs.open(segment, 'r');
+          try {
+            data = Buffer.alloc(size);
+            await handle.read(data, 0, size, 0);
+          } finally {
+            await handle.close();
+          }
+        } catch {
+          continue; // Segment disparu : on le reprendra s'il revient.
+        }
+
+        const result = fmp4Append(capture.writer, data, from);
+        capture.offsets.set(name, result ? result.consumed : from);
+        if (result && result.chunk.length > 0) {
+          await capture.handle.write(result.chunk);
+          capture.bytes += result.chunk.length;
+        }
       }
+    } finally {
+      capture.draining = false;
     }
   }
 

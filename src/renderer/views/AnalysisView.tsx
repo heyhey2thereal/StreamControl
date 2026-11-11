@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { StreamDiagnostics, WatchAlert } from '../../shared/types';
-import type { StreamControl } from '../hooks/useStreamControl';
 import { useTranslation } from '../hooks/useTranslation';
-import { Icon } from '../components/Icon';
 
 /** Libelle et classe d'une alerte, selon sa nature. */
 function alertStyle(kind: WatchAlert['kind']): string {
@@ -30,7 +28,7 @@ function formatDuration(seconds: number): string {
  * stabilite, resolution reelle, coupures). L'objectif : reperer un flux qui
  * semble fonctionner alors que l'image saccade.
  */
-export function AnalysisView({ sc }: { sc: StreamControl }) {
+export function AnalysisView() {
   const { t } = useTranslation();
   const [alerts, setAlerts] = useState<WatchAlert[]>([]);
   const [rows, setRows] = useState<StreamDiagnostics[]>([]);
@@ -158,28 +156,6 @@ export function AnalysisView({ sc }: { sc: StreamControl }) {
           </div>
         ))
       )}
-
-      {/* --- Replay ----------------------------------------------------- */}
-      <div className="section-title">{t('replay.title')}</div>
-      <div className="panel">
-        <div className="hint">{t('replay.subtitle')}</div>
-        <div className="btn-row" style={{ marginTop: 10 }}>
-          <button type="button" className="btn small primary" onClick={() => void sc.saveReplayLatest()}>
-            <Icon name="replay" size={14} /> {t('replay.saveLatest')}
-          </button>
-          <button type="button" className="btn small" onClick={() => void sc.saveReplayAll()}>
-            {t('replay.saveAll')}
-          </button>
-          <button type="button" className="btn small ghost" onClick={() => void sc.openReplayFolder()}>
-            {t('replay.openFolder')}
-          </button>
-        </div>
-        {!sc.settings?.replay.enabled ? (
-          <div className="hint" style={{ marginTop: 8 }}>
-            {t('replay.disabledHint')}
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }

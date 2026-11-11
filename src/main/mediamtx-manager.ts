@@ -198,6 +198,8 @@ export class MediamtxManager extends EventEmitter {
       recordFormat: string;
       recordSegmentDuration: string;
       recordDeleteAfter: string;
+      /** Duree d'une partie (fragment) fMP4 : c'est le RPO en cas de panne. */
+      recordPartDuration?: string;
     },
   ): Promise<boolean> {
     if (this.status.state !== 'running') return false;
@@ -211,6 +213,9 @@ export class MediamtxManager extends EventEmitter {
       recordFormat: options.recordFormat,
       recordSegmentDuration: options.recordSegmentDuration,
       recordDeleteAfter: options.recordDeleteAfter,
+      // Une partie courte : en cas de panne, on perd au plus cette duree. 1 s
+      // est le reglage de MediaMTX par defaut ; on l'abaisse pour ne rien perdre.
+      ...(options.recordPartDuration ? { recordPartDuration: options.recordPartDuration } : {}),
     };
 
     // `patch` d'abord : si le chemin existe deja, on met a jour son

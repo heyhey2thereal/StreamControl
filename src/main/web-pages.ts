@@ -180,7 +180,7 @@ export class WebPagesServer {
    * supprime. La cle est un jeton opaque : l'appareil ne connait jamais le
    * chemin sur le poste, et ne peut donc rien lire d'autre.
    */
-  private readonly pendingReplays = new Map<string, { file: string; directory: string; at: number }>();
+  private readonly pendingReplays = new Map<string, { file: string; directory: string; name: string; at: number }>();
 
   constructor(options: WebPagesOptions) {
     this.logger = options.logger;
@@ -593,6 +593,17 @@ export class WebPagesServer {
       return;
     }
 
+    // --- Telechargement d'un replay (avant le controle de jeton) ----------
+    // Le fichier est servi sur un jeton opaque, a usage unique. La balise
+    // `download` d'un navigateur ne peut PAS envoyer d'en-tete d'autorisation :
+    // exiger `X-Remote-Token` ici rendait le telechargement impossible (« fichier
+    // non disponible »). C'est donc le jeton d'URL qui autorise, et il n'est
+    // valable qu'une fois.
+    if (segments[1] === 'replay' && segments.length === 3 && request.method === 'GET') {
+      this.servePendingReplay(response, segments[2]);
+      return;
+    }
+
     // --- Tout le reste exige un jeton ------------------------------------
     const device = this.remote.verify(request.headers['x-remote-token'] as string | undefined);
     if (!device) {
@@ -695,12 +706,16 @@ export class WebPagesServer {
     this.sweepPendingReplays();
     const token = randomUUID();
     const directory = path.dirname(result.file);
-    this.pendingReplays.set(token, { file: result.file, directory, at: Date.now() });
+    // Le nom du flux sert de nom de fichier au telechargement : l'appareil
+    // n'herite pas d'un « replay.mp4 » anonyme.
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'replay';
+    this.pendingReplays.set(token, { file: result.file, directory, name, at: Date.now() });
     this.sendJson(response, 200, {
       ok: true,
       token,
       seconds: result.seconds ?? 0,
       url: `/remote/replay/${token}`,
+      name,
       message: result.message,
     });
   }
@@ -724,9 +739,12 @@ export class WebPagesServer {
       return;
     }
 
+    // Nom de fichier lisible : le nom du flux, nettoye, horodate.
+    const safe = entry.name.replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '') || 'replay';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
     response.writeHead(200, {
       'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename="replay.mp4"',
+      'Content-Disposition': `attachment; filename="${safe}_${stamp}.mp4"`,
       'Cache-Control': 'no-store',
     });
     stream.pipe(response);

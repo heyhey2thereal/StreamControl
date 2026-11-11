@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AppSettings, ReplayResult, ReplayState } from '../shared/types';
 import type { Logger } from './logger';
-import { resolveRecordingDir } from './recording';
+import { resolveRecordingDir, RECORD_PART_DURATION } from './recording';
 import { concatFragmentedMp4Files, fmp4SegmentSeconds } from './fmp4';
 
 /**
@@ -74,6 +74,7 @@ export function replayPathOptions(settings: AppSettings, streamPath: string): {
   recordFormat: string;
   recordSegmentDuration: string;
   recordDeleteAfter: string;
+  recordPartDuration: string;
 } {
   const dir = replayBufferDir(settings.replay.path).replace(/\\/g, '/').replace(/\/+$/, '');
   return {
@@ -85,6 +86,9 @@ export function replayPathOptions(settings: AppSettings, streamPath: string): {
     recordFormat: 'fmp4',
     recordSegmentDuration: `${BUFFER_SEGMENT_SECONDS}s`,
     recordDeleteAfter: `${settings.replay.bufferSeconds}s`,
+    // Meme granularite que l'enregistrement : la capture qui suit ce tampon
+    // demarre et s'arrete au fragment pres.
+    recordPartDuration: RECORD_PART_DURATION,
   };
 }
 
