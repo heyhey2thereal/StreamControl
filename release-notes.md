@@ -96,6 +96,27 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 - **Replays rangés par flux.** Les replays sont écrits dans un sous-dossier
   portant le nom du flux, sous le dossier des replays.
 
+- **Replay : plage bornée, aperçu et tête de lecture.** On ne peut plus
+  demander un extrait plus long que ce qui est mémorisé (300 s alors que le flux
+  n'a que 32 s). Un **aperçu du direct** montre l'image que l'on va récupérer, et
+  une **tête de lecture** rouge avance de gauche à droite sur la barre.
+
+- **Mise à jour : plus de retour en arrière ni de boucle.** Une version plus
+  ancienne que celle installée n'est plus proposée. La fenêtre ne se rouvre plus
+  à chaque démarrage pour une version déjà vue ; elle revient si les notes
+  changent.
+
+- **Enregistrement : le bon fichier est affiché.** Avec le replay actif,
+  l'interface montrait un ancien enregistrement ; elle affiche le fichier
+  réellement en cours d'écriture.
+
+- **Verrouillage : l'indice est saisissable.** Le champ mot de passe reprenait
+  le focus en boucle, empêchant de remplir l'indice.
+
+- **Désinstallation : nettoyage proposé.** L'installeur demande si les données
+  (paramètres, journaux, enregistrements, tampon de replay) doivent aussi être
+  supprimées. Par défaut : non.
+
 ---
 
 ## Replay depuis un appareil

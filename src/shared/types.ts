@@ -94,6 +94,15 @@ export interface AppSettings {
      */
     dismissedUpdateVersion: string;
     /**
+     * Signature de la derniere mise a jour deja proposee (version + notes).
+     *
+     * Tant qu'elle ne change pas, l'application ne repropose pas la fenetre au
+     * demarrage : sans cela, une meme version (ou une version reconstruite a
+     * l'identique) revenait a chaque lancement, alors qu'on venait de la fermer.
+     * Un nouvel envoi de notes change la signature et la fenetre revient.
+     */
+    lastSeenUpdate: string;
+    /**
      * Empreinte du mot de passe de verrouillage. Vide = aucun mot de passe
      * defini. Le mot de passe lui-meme n'est jamais conserve.
      */
@@ -733,7 +742,11 @@ export interface AppUpdateInfo {
   version: string;
   /** Version actuellement installee. */
   currentVersion: string;
-  /** Vrai si la version publiee differe de celle installee. */
+  /** Vrai si la version publiee est PLUS ANCIENNE (jamais proposee). */
+  older: boolean;
+  /** Vrai si la version publiee porte le meme numero que celle installee. */
+  same: boolean;
+  /** Vrai si la version publiee est plus recente que celle installee. */
   different: boolean;
   /** Notes de la version, en texte simple. */
   notes: string;

@@ -210,7 +210,12 @@ export class StreamController extends EventEmitter {
         recording: this.settings.get().replay.enabled
           ? this.capture.isCapturing(endpoint.id)
           : live?.recording === true,
-        recordingPath: live?.recordingPath,
+        // Le fichier reellement en cours d'ecriture : celui de la capture quand
+        // elle tourne, sinon celui de MediaMTX. Sans cela, l'interface affichait
+        // un ancien enregistrement des que le replay etait actif.
+        recordingPath: this.settings.get().replay.enabled
+          ? this.capture.currentFile(endpoint.id)
+          : live?.recordingPath,
       });
     }
 

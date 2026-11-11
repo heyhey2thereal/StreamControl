@@ -618,7 +618,7 @@ export class WebPagesServer {
     const permissions = this.remote.permissionsFor(device.kind ?? 'desktop');
 
     if (segments[1] === 'state' && request.method === 'GET') {
-      this.sendJson(response, 200, this.remoteState(permissions));
+      this.sendJson(response, 200, await this.remoteState(permissions));
       return;
     }
 
@@ -827,8 +827,28 @@ export class WebPagesServer {
     }
   }
 
-  /** Etat consolide pour l'appareil : flux, OBS, services. */
-  private remoteState(permissions: RemotePermissions): unknown {
+  /** Etat consolide pour l'appareil : flux, OBS, services.
+   *
+   * Asynchrone : la duree de replay reellement disponible demande une lecture du
+   * tampon, et l'appareil doit la connaitre pour ne pas demander un extrait plus
+   * long que ce qui est memorise.
+   */
+  private async remoteState(permissions: RemotePermissions): Promise<unknown> {
+    // Duree reellement memorisee par flux : l'appareil ne doit pas proposer plus
+    // que ce qui existe (le serveur le refuserait de toute facon).
+    const available = new Map<string, number>();
+    if (this.getReplayConfig?.().enabled) {
+      await Promise.all(
+        this.streams.list().map(async (endpoint) => {
+          try {
+            available.set(endpoint.id, await this.streams.replayAvailable(endpoint.id));
+          } catch {
+            available.set(endpoint.id, 0);
+          }
+        }),
+      );
+    }
+
     return {
       streams: this.streams.list().map((endpoint) => ({
         id: endpoint.id,
@@ -840,6 +860,8 @@ export class WebPagesServer {
         viewers: endpoint.status.viewers,
         videoWidth: endpoint.status.videoWidth,
         videoHeight: endpoint.status.videoHeight,
+        // Duree de replay reellement disponible pour ce flux, en secondes.
+        replaySeconds: available.get(endpoint.id) ?? 0,
         hls: `/hls/${endpoint.path}/index.m3u8`,
         // Lecture WebRTC (WHEP) : bien plus proche du direct que le HLS. Le
         // panneau distant l'essaie en premier, comme la page de lecture du

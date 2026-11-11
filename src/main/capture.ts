@@ -96,6 +96,18 @@ export class CaptureManager extends EventEmitter {
   }
 
   /**
+   * Fichier en cours d'ecriture pour un flux, si une capture tourne.
+   *
+   * Sert a l'interface : elle montre le fichier reellement produit, et l'ouvre
+   * d'un clic. Sans cela, avec le replay actif, l'interface n'avait aucun
+   * chemin a afficher (MediaMTX ne connait que le tampon) et semblait montrer
+   * un ancien enregistrement.
+   */
+  currentFile(streamId: string): string | undefined {
+    return this.captures.get(streamId)?.target;
+  }
+
+  /**
    * Demarre une capture pour un flux.
    *
    * @returns le chemin du fichier en cours d'ecriture.

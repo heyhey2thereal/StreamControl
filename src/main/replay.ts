@@ -293,6 +293,17 @@ export async function planReplay(
       message: `La memoire est de ${bufferLimit} s : un replay au-dela n'est pas possible. Augmentez-la dans les Parametres.`,
     };
   }
+  // Le flux n'a pas encore publie assez longtemps : demander plus que ce qui
+  // est reellement memorise donnerait un extrait plus court que voulu. On le
+  // dit clairement au lieu de produire un fichier trompeur.
+  if (requestedFrom > available + 0.5) {
+    return {
+      ok: false,
+      selected: [],
+      seconds: 0,
+      message: `Le flux n'a que ${Math.round(available)} s de memoire : demandez au plus cette duree.`,
+    };
+  }
   if (wanted < minimum) {
     return { ok: false, selected: [], seconds: 0, message: `Un replay doit durer au moins ${minimum} s. Demande : ${wanted} s.` };
   }

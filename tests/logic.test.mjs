@@ -1193,3 +1193,22 @@ test('la duree d un enregistrement direct est reparee', () => {
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * La comparaison de versions refuse une version plus ancienne.
+ *
+ * Le defaut corrige : l'application proposait parfois d'installer une version
+ * PLUS BASSE que celle installee (brouillon publie par erreur, ou version
+ * precedente encore en tete du depot).
+ */
+test('la comparaison de versions ordonne correctement', () => {
+  const { compareVersions } = require('../dist-electron/main/app-updater.js');
+
+  assert.ok(compareVersions('2.0.2', '2.0.2') === 0, 'versions egales');
+  assert.ok(compareVersions('v2.0.2', '2.0.2') === 0, 'prefixe v ignore');
+  assert.ok(compareVersions('2.0.3', '2.0.2') > 0, 'version plus recente');
+  assert.ok(compareVersions('2.0.1', '2.0.2') < 0, 'version plus ancienne');
+  assert.ok(compareVersions('2.1.0', '2.0.9') > 0, 'mineure plus recente');
+  assert.ok(compareVersions('3.0.0', '2.9.9') > 0, 'majeure plus recente');
+  assert.ok(compareVersions('2.0', '2.0.0') === 0, 'chiffres manquants = zero');
+});

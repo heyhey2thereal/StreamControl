@@ -3402,3 +3402,37 @@ input[type='range'].input {
   padding: 1px 5px;
   border-radius: 4px;
 }
+
+/* Tete de lecture du direct : elle avance de gauche a droite. */
+.replay-playhead {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--rec, #ef4444);
+  box-shadow: 0 0 6px var(--rec, #ef4444);
+  pointer-events: none;
+}
+
+/* Apercu du direct, sous la barre : on voit ce que l'on va recuperer. */
+.replay-preview {
+  margin-top: 14px;
+}
+.replay-preview-video {
+  width: 100%;
+  max-height: 360px;
+  border-radius: 8px;
+  background: #000;
+  display: block;
+}
+.replay-preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 13px;
+}

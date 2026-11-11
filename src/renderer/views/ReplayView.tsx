@@ -4,6 +4,7 @@ import type { StreamControl } from '../hooks/useStreamControl';
 import { useTranslation } from '../hooks/useTranslation';
 import { Icon } from '../components/Icon';
 import { Spinner } from '../components/Spinner';
+import { StreamPreview } from '../components/StreamPreview';
 
 /**
  * Onglet Replay.
@@ -71,12 +72,20 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   // (apres une reinstallation) peut annoncer plus que la memoire, ce qui
   // remplirait la barre au-dela de 100 %.
   const available = Math.min(selectedState?.availableSeconds ?? 0, memory);
+  // On ne peut pas demander plus que ce qui est reellement memorise : sans ce
+  // plafond, « un replay de 300 s » etait accepte alors que le flux n'avait que
+  // 32 s, et l'extrait etait plus court que voulu.
+  const reachable = Math.max(available, minimum);
 
-  // Le remplissage reel grandit tant que le flux publie.
+  // Le remplissage reel grandit tant que le flux publie : la barre se remplit
+  // de la gauche (le plus ancien) vers la droite (le direct).
   const pct = (seconds: number) => `${Math.min(100, Math.max(0, (seconds / memory) * 100))}%`;
   // Position d'une seconde "en arriere" sur la barre : 0 (direct) est a DROITE.
   const startLeft = `${Math.min(100, Math.max(0, ((memory - startAgo) / memory) * 100))}%`;
   const endLeft = `${Math.min(100, Math.max(0, ((memory - endAgo) / memory) * 100))}%`;
+  // Curseur du direct : il avance de gauche a droite a mesure que le tampon se
+  // remplit, comme la tete de lecture d'un montage.
+  const liveLeft = pct(available);
 
   const wanted = Math.max(0, startAgo - endAgo);
 
@@ -88,7 +97,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
     const rect = barRef.current.getBoundingClientRect();
     const ratio = (event.clientX - rect.left) / rect.width;
     const value = secondsFromRatio(ratio);
-    if (dragging.current === 'start') setStartAgo(Math.max(endAgo, Math.min(memory, value)));
+    if (dragging.current === 'start') setStartAgo(Math.max(endAgo, Math.min(reachable, value)));
     else setEndAgo(Math.max(0, Math.min(startAgo, value)));
   };
 
@@ -103,6 +112,14 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
       window.removeEventListener('pointerup', stopDrag);
     };
   });
+
+  // La duree disponible peut diminuer (flux qui redemarre, memoire videe) :
+  // on ramene alors les poignees dans la plage reellement atteignable, pour ne
+  // pas demander un extrait plus long que ce qui existe.
+  useEffect(() => {
+    if (startAgo > reachable) setStartAgo(reachable);
+    if (endAgo > reachable) setEndAgo(0);
+  }, [reachable, startAgo, endAgo]);
 
   const save = async () => {
     if (!selected) return;
@@ -223,8 +240,11 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           </div>
 
           <div className="replay-bar" ref={barRef}>
-            {/* Partie reellement memorisee : elle grandit avec le direct. */}
+            {/* Partie reellement memorisee : elle grandit de la gauche (le plus
+                ancien) vers la droite (le direct). */}
             <div className="replay-bar-fill" style={{ width: pct(available) }} />
+            {/* Tete de lecture du direct : elle avance toute seule. */}
+            <div className="replay-playhead" style={{ left: liveLeft }} aria-hidden />
             {/* Selection entre les deux poignees. */}
             <div
               className="replay-bar-select"
@@ -253,6 +273,16 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           </div>
         </div>
 
+        {/* --- Apercu du direct -------------------------------------------- */}
+        <div className="replay-preview">
+          {selected && selected.status.publishing ? (
+            <StreamPreview key={selected.id} src={selected.urls.hls} />
+          ) : (
+            <div className="replay-preview-empty">{t('replay.previewNoLive')}</div>
+          )}
+          <div className="hint">{t('replay.previewHint')}</div>
+        </div>
+
         <div className="replay-summary">
           <span>{t('replay.wanted', { seconds: wanted })}</span>
           <span className={`badge ${wanted >= minimum ? 'ok' : 'err'}`}>
@@ -274,7 +304,7 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
           <button
             type="button"
             className="btn ghost"
-            onClick={() => { setStartAgo(Math.min(memory, available || memory)); setEndAgo(0); }}
+            onClick={() => { setStartAgo(Math.min(reachable, available || reachable)); setEndAgo(0); }}
           >
             {t('replay.wholeMemory')}
           </button>

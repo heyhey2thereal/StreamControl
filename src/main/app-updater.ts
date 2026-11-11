@@ -102,6 +102,28 @@ function stripMarkdown(text: string): string {
 }
 
 /**
+ * Compare deux numeros de version (semantique simple : 1.2.3).
+ *
+ * @returns un nombre negatif si `a` est plus ancien que `b`, 0 s'ils sont
+ *   egaux, positif si `a` est plus recent.
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string) =>
+    value
+      .replace(/^v/i, '')
+      .split(/[.+-]/)
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const left = parse(a);
+  const right = parse(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
  * Interroge la derniere version publiee.
  *
  * @param force true pour ignorer la version ecartee par l'utilisateur.
@@ -147,23 +169,35 @@ export async function checkAppUpdate(
   }
 
   const current = options.currentVersion;
-  const normalized = (value: string) => value.replace(/^v/i, '');
   const installer = release.assets?.find((asset) => /Setup.*\.exe$/i.test(asset.name));
+  const comparison = compareVersions(version, current);
 
   const info: AppUpdateInfo = {
     version,
     currentVersion: current,
-    different: normalized(version) !== normalized(current),
+    // Une version PLUS ANCIENNE ne doit jamais etre proposee : elle ferait
+    // « reculer » l'application, et la proposition reviendrait sans fin.
+    older: comparison < 0,
+    same: comparison === 0,
+    different: comparison > 0,
     notes: stripMarkdown(release.body ?? ''),
     downloadUrl: installer?.browser_download_url ?? release.html_url ?? '',
     releaseUrl: release.html_url ?? '',
     publishedAt: release.published_at,
   };
 
+  // Le depot publie peut renvoyer une version plus ancienne que celle
+  // installee (brouillon publie par erreur, ou version precedente encore en
+  // tete). On ne la propose pas.
+  if (info.older) {
+    logger.info('updater', `Version publiee ${version} plus ancienne que ${current} : ignoree.`);
+    return null;
+  }
+
   logger.info(
     'updater',
     `Mise a jour disponible : ${version} (installee : ${current}` +
-      `${info.different ? '' : ', meme version'}).`,
+      `${info.same ? ', meme version' : ''}).`,
   );
   return info;
 }

@@ -796,7 +796,12 @@ export function renderRemoteDesktopPage(options: RemoteDesktopPageOptions): stri
   function openReplayModal(id, name) {
     if (!state || !state.replay || !state.replay.enabled) { toast(L.replayDisabled, true); return; }
     replayTarget = { id: id, name: name };
-    replayMemory = state.replay.bufferSeconds || 0;
+    // La barre represente la memoire configuree, mais on ne peut pas demander
+    // plus que ce qui est reellement memorise : le poste refuserait l'extrait.
+    var configured = state.replay.bufferSeconds || 0;
+    var stream = (state.streams || []).filter(function (s) { return s.id === id; })[0];
+    var available = stream && typeof stream.replaySeconds === 'number' ? stream.replaySeconds : configured;
+    replayMemory = Math.max(1, Math.min(configured, available));
     replayStart = replayMemory;
     replayEnd = 0;
     document.getElementById('replay-title').textContent = L.replayTitle + (name ? ' - ' + name : '');

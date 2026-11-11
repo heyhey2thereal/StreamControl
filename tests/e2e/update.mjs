@@ -23,19 +23,25 @@ const USER_DATA = '/tmp/sc-e2e-update';
 const { check, summary } = createChecker();
 
 // --- Serveur de publication simule ---------------------------------------
-const RELEASE = {
-  tag_name: 'v2.0.0',
-  name: 'StreamControl v2.0.0',
-  html_url: 'http://127.0.0.1:9361/release-page',
-  published_at: '2026-10-26T00:00:00Z',
-  body: '## Corrections\n\n- Le lecteur WebRTC fonctionne.\n- `Latence` corrigee.',
-  assets: [
-    {
-      name: 'StreamControl-Setup-2.0.0.exe',
-      browser_download_url: 'http://127.0.0.1:9361/StreamControl-Setup-2.0.0.exe',
-    },
-  ],
-};
+// La version publiee est volontairement PLUS RECENTE que celle installee : une
+// version plus ancienne ne doit jamais etre proposee (l'application reculerait).
+const releaseTag = { value: 'v9.9.9' };
+
+function releaseFor(tag) {
+  return {
+    tag_name: tag,
+    name: `StreamControl ${tag}`,
+    html_url: 'http://127.0.0.1:9361/release-page',
+    published_at: '2026-10-26T00:00:00Z',
+    body: '## Corrections\n\n- Le lecteur WebRTC fonctionne.\n- `Latence` corrigee.',
+    assets: [
+      {
+        name: `StreamControl-Setup-${tag.replace(/^v/, '')}.exe`,
+        browser_download_url: `http://127.0.0.1:9361/StreamControl-Setup-${tag.replace(/^v/, '')}.exe`,
+      },
+    ],
+  };
+}
 
 let releaseCalls = 0;
 let authenticatedCalls = 0;
@@ -47,7 +53,7 @@ const releaseServer = http.createServer((request, response) => {
     // d'authentification pour verifier qu'aucun jeton n'est exige.
     if (request.headers.authorization) authenticatedCalls += 1;
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify(RELEASE));
+    response.end(JSON.stringify(releaseFor(releaseTag.value)));
     return;
   }
   response.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -87,7 +93,7 @@ try {
     20_000,
   );
   check('la fenetre de mise a jour apparait au lancement', appeared);
-  check('la version publiee est annoncee', (await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""')).includes('v2.0.0'));
+  check('la version publiee est annoncee', (await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""')).includes('v9.9.9'));
   const text = await cdp.evaluate('document.querySelector(".update-modal")?.textContent ?? ""');
   check('les notes de version sont affichees', text.includes('Le lecteur WebRTC fonctionne'), text.slice(0, 60));
   check('les trois reponses sont proposees', await cdp.evaluate(`(() => {
@@ -108,7 +114,7 @@ try {
   // --- 3. Verification manuelle : la fenetre revient ---------------------
   console.log('\n--- verification manuelle ---');
   const manual = await cdp.evaluate('window.streamcontrol.checkAppUpdate(true)');
-  check('checkAppUpdate renvoie la version publiee', manual?.version === 'v2.0.0', manual?.version);
+  check('checkAppUpdate renvoie la version publiee', manual?.version === 'v9.9.9', manual?.version);
   // La version installee vient du binaire compile : on ne la fige pas, sinon
   // le test casse a chaque changement de version. On verifie seulement qu'elle
   // est renseignee et differente de la version publiee.
@@ -124,7 +130,7 @@ try {
   );
   check(
     "l'adresse de l'installeur est fournie",
-    typeof manual?.downloadUrl === 'string' && manual.downloadUrl.endsWith('StreamControl-Setup-2.0.0.exe'),
+    typeof manual?.downloadUrl === 'string' && manual.downloadUrl.endsWith('StreamControl-Setup-9.9.9.exe'),
     manual?.downloadUrl,
   );
 
@@ -158,7 +164,7 @@ try {
   })()`);
   const ignored = await waitFor('la version est enregistree', async () => {
     const settings = await cdp.evaluate('window.streamcontrol.getSettings()');
-    return settings.ui.dismissedUpdateVersion === 'v2.0.0';
+    return settings.ui.dismissedUpdateVersion === 'v9.9.9';
   }, 8000);
   check('la version ecartee est enregistree', ignored);
   const closed = await waitFor(
@@ -173,7 +179,18 @@ try {
   const afterIgnore = await cdp.evaluate('window.streamcontrol.checkAppUpdate(false)');
   check('une version ecartee n est plus proposee', afterIgnore === null, JSON.stringify(afterIgnore));
   const forced = await cdp.evaluate('window.streamcontrol.checkAppUpdate(true)');
-  check('la verification manuelle la retrouve', forced?.version === 'v2.0.0', forced?.version);
+  check('la verification manuelle la retrouve', forced?.version === 'v9.9.9', forced?.version);
+
+  // --- 5bis. Une version PLUS ANCIENNE n'est jamais proposee -------------
+  // Le defaut corrige : le depot renvoyait parfois une version plus basse que
+  // celle installee, et l'application la proposait — elle aurait « recule ».
+  console.log('\n--- version plus ancienne ---');
+  const installed = (await cdp.evaluate('window.streamcontrol.getSettings()')) && forced?.currentVersion;
+  console.log('version installee :', installed);
+  releaseTag.value = 'v0.0.1';
+  const older = await cdp.evaluate('window.streamcontrol.checkAppUpdate(true)');
+  check('une version plus ancienne est ignoree', older === null, JSON.stringify(older));
+  releaseTag.value = 'v9.9.9';
 
   // --- 6. La verification fonctionne sans jeton --------------------------
   console.log('\n--- verification sans jeton ---');

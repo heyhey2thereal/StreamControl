@@ -345,13 +345,26 @@ export function useStreamControl() {
       .checkAppUpdate(false)
       .then((appUpdate) => {
         if (cancelled || !appUpdate) return;
-        setState((previous) => ({ ...previous, appUpdate, updateDialogOpen: true }));
+        // Meme version ET memes notes que la derniere fois : l'utilisateur l'a
+        // deja vue, on ne rouvre pas la fenetre au demarrage. Un nouvel envoi de
+        // notes (correctifs) change la signature et la fenetre revient.
+        const signature = `${appUpdate.version}\n${appUpdate.notes}`;
+        if (state.settings?.ui.lastSeenUpdate === signature) return;
+        setState((previous) => ({
+          ...previous,
+          appUpdate,
+          updateDialogOpen: true,
+          settings: previous.settings
+            ? { ...previous.settings, ui: { ...previous.settings.ui, lastSeenUpdate: signature } }
+            : previous.settings,
+        }));
+        void api.saveSettings({ ui: { lastSeenUpdate: signature } } as Partial<AppSettings>).catch(() => undefined);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [api, state.ready]);
+  }, [api, state.ready, state.settings?.ui.lastSeenUpdate]);
 
   /**
    * Verifie les mises a jour a la demande (bouton des Parametres).

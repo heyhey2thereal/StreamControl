@@ -204,7 +204,52 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   `src/renderer/views/AnalysisView.tsx`, `src/main/player-page.ts`,
   `src/shared/i18n.ts`.
 
-## 16. Tests
+## 17. Replay : plage bornee, apercu et tete de lecture
+- **On ne peut plus demander un replay plus long que ce qui est memorise** : un
+  extrait de 300 s alors que le flux n'a que 32 s est refuse, avec un message
+  clair. Les poignees sont ramenees dans la plage reellement disponible.
+- **Apercu du direct** sous la barre : on voit l'image que l'on va recuperer.
+- **Tete de lecture** rouge qui **avance de gauche a droite** sur la barre, au
+  rythme du direct : la progression du tampon est visible en un coup d'oeil.
+- Fichiers : `src/renderer/views/ReplayView.tsx`,
+  `src/renderer/components/StreamPreview.tsx` (nouveau), `src/main/replay.ts`,
+  `src/renderer/index.html` (hls.js), `src/shared/i18n.ts`.
+
+## 18. Mise a jour : plus de retour en arriere, plus de boucle
+- **Une version plus ancienne n'est jamais proposee** : le depot renvoyait
+  parfois une version plus basse que celle installee (brouillon publie par
+  erreur), et l'application la proposait — elle aurait « recule ». La comparaison
+  est desormais semantique (`2.0.3 > 2.0.2`), et une version plus basse est
+  ignoree.
+- **Plus de boucle** : la fenetre ne se rouvre plus a chaque demarrage pour une
+  version **deja vue** (meme version ET memes notes). Un nouvel envoi de notes
+  change la signature et la fenetre revient — c'est ainsi qu'une meme version
+  reconstruite avec des correctifs reste proposee.
+- Fichiers : `src/main/app-updater.ts`, `src/shared/types.ts`,
+  `src/main/settings.ts`, `src/renderer/hooks/useStreamControl.ts`.
+
+## 19. Enregistrement : le bon fichier est affiche
+- Avec le replay actif, l'interface n'avait aucun chemin a montrer (MediaMTX ne
+  connait que le tampon) : elle semblait afficher un ancien enregistrement.
+  Elle montre desormais le **fichier reellement en cours d'ecriture** (celui de
+  la capture).
+- Fichiers : `src/main/capture.ts`, `src/main/stream-controller.ts`.
+
+## 20. Pop-up de verrouillage : l'indice est saisissable
+- **Cause** : le champ mot de passe reprenait le focus a chaque redessin de
+  l'application (l'effet dependait de `onClose`, une fonction recreee a chaque
+  rendu). Impossible de remplir l'indice.
+- **Correction** : le focus n'est donne qu'une fois, a l'ouverture.
+- Fichiers : `src/renderer/components/LockDialog.tsx`.
+
+## 21. Desinstallation : nettoyage propose
+- L'installeur NSIS demande, a la desinstallation, si les **donnees** doivent
+  aussi etre supprimees : parametres, journaux, enregistrements, tampon de
+  replay. Par defaut, la reponse est **Non** (un clic trop rapide ne doit pas
+  effacer des enregistrements).
+- Fichiers : `build/uninstall-cleanup.nsh` (nouveau), `package.json`.
+
+## 22. Tests
 - `tests/e2e/replay.mjs` : plage choisie, refus d'une plage trop courte, MP4
   lisible, duree reelle (6 s -> `duration=6`), sous-dossier par flux, replay
   demande depuis un appareil (preparation, telechargement MP4 **sans en-tete
@@ -212,21 +257,23 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
   de la memoire.
 - `tests/e2e/recording.mjs` : demarrage de l'enregistrement en moins de 3 s,
   duree du fichier conforme au temps enregistre (sans perte), duree non nulle.
-- `tests/e2e/player.mjs` : son de l'apercu (video non `muted`).
+- `tests/e2e/update.mjs` : fenetre au lancement, notes, trois reponses,
+  **version plus ancienne ignoree**, version ecartee, verification sans jeton,
+  pas de retour de la fenetre apres un changement de reglage.
+- `tests/e2e/player.mjs` : son de l'apercu (video non `muted`), ecran « pas de
+  flux » (message avec variable resolue, fond personnalise, mode noir).
 - `tests/e2e/remote.mjs` : deux interfaces, 403 sans autorisation,
   autorisation prise en compte a chaud, 401 sans jeton, reconciliation de la
   grille, barre de lecture du replay a deux poignees.
 - `tests/e2e/obs.mjs` : parametre unique par source, resolution par cellule,
   flux desactive masque dans OBS.
-- `tests/e2e/player.mjs` : ecran « pas de flux » (message avec variable
-  resolue, fond personnalise, mode noir).
 - `tests/logic.test.mjs` : duree d'un segment fMP4 (plusieurs fragments, bases
   de temps par piste), **duree totale annoncee par l'en-tete assemble**,
   **lecture d'un segment en plusieurs fois sans perte**, **reparation de la
-  duree d'un enregistrement direct**, selection d'une plage de replay, reglages
-  de replay bornes.
+  duree d'un enregistrement direct**, **comparaison de versions**, selection
+  d'une plage de replay, reglages de replay bornes.
 - Tests rendus agnostiques a la version (mise a jour, macro-variables,
   navigation).
 
-Chiffres : **46 tests unitaires · 500 verifications e2e · 0 echec.**
+Chiffres : **47 tests unitaires · 503 verifications e2e · 0 echec.**
 

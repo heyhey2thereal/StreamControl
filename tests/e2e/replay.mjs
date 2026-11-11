@@ -118,12 +118,14 @@ try {
   await sleep(6000);
 
   // --- Sauvegarde --------------------------------------------------------
-  // On demande une plage precise : les 30 dernieres secondes.
+  // On demande une plage sure : la duree disponible, bornee. Demander plus que
+  // ce qui est memorise est refuse (voir plus bas), donc on lit d'abord l'etat.
   const state = await cdp.evaluate(`window.streamcontrol.replayState(${JSON.stringify(target.id)})`);
   check('l etat du replay est disponible', typeof state?.availableSeconds === 'number', JSON.stringify(state));
 
+  const wanted = Math.max(5, Math.min(30, Math.floor(state.availableSeconds || 0)));
   const saved = await cdp.evaluate(
-    `window.streamcontrol.replaySave(${JSON.stringify(target.id)}, { fromSeconds: 30, toSeconds: 0 })`,
+    `window.streamcontrol.replaySave(${JSON.stringify(target.id)}, { fromSeconds: ${wanted}, toSeconds: 0 })`,
   );
   check('la sauvegarde renvoie un fichier', saved?.ok === true && typeof saved.file === 'string', JSON.stringify(saved?.message));
 
@@ -132,6 +134,13 @@ try {
     `window.streamcontrol.replaySave(${JSON.stringify(target.id)}, { fromSeconds: 2, toSeconds: 0 })`,
   );
   check('une plage trop courte est refusee', tooShort?.ok === false, String(tooShort?.message));
+
+  // Une plage plus longue que ce qui est memorise doit etre refusee : c'est le
+  // defaut corrige (« un replay de 300 s alors que le flux n'a que 32 s »).
+  const tooLong = await cdp.evaluate(
+    `window.streamcontrol.replaySave(${JSON.stringify(target.id)}, { fromSeconds: ${Math.ceil((state.availableSeconds || 0) + 5)}, toSeconds: 0 })`,
+  );
+  check('une plage plus longue que la memoire est refusee', tooLong?.ok === false, String(tooLong?.message));
 
   // Les replays vont dans un sous-dossier « replays » du dossier des
   // enregistrements : c'est ce que renvoie la sauvegarde.
@@ -211,11 +220,15 @@ try {
   check('l etat porte les reglages du replay', remoteState.replay && remoteState.replay.enabled === true, JSON.stringify(remoteState.replay));
 
   // Preparation de l'extrait. Le nom du flux est transmis : il sert de nom de
-  // fichier au telechargement.
+  // fichier au telechargement. On demande une plage sure : la duree reellement
+  // disponible, publiee dans l'etat (`replaySeconds`).
+  const remoteStream = (remoteState.streams || []).find((s) => s.id === target.id) || {};
+  const remoteWanted = Math.max(5, Math.min(10, Math.floor(remoteStream.replaySeconds || 0)));
+  check('l etat publie la duree de replay disponible', typeof remoteStream.replaySeconds === 'number', JSON.stringify(remoteStream.replaySeconds));
   const prepared = await request(`${base}/remote/replay`, {
     method: 'POST',
     headers: { ...authHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: target.id, name: target.name, fromSeconds: 10, toSeconds: 0 }),
+    body: JSON.stringify({ id: target.id, name: target.name, fromSeconds: remoteWanted, toSeconds: 0 }),
   });
   const preparedBody = JSON.parse(prepared.body);
   check('l appareil prepare un replay', preparedBody.ok === true && typeof preparedBody.url === 'string', prepared.body.slice(0, 120));

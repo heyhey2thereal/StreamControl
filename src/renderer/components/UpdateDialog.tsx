@@ -63,7 +63,9 @@ export function UpdateDialog({ sc }: { sc: StreamControl }) {
         </div>
 
         <p className="update-intro">
-          {update.different ? t('update.introNew') : t('update.introSame')}
+          {update.different
+            ? t('update.introNew')
+            : t('update.introSame')}
         </p>
 
         {update.notes ? (

@@ -41,6 +41,7 @@ export function defaultSettings(): AppSettings {
       language: 'fr',
       theme: 'dark',
       dismissedUpdateVersion: '',
+      lastSeenUpdate: '',
       lockHash: '',
       lockSalt: '',
       lockHint: '',
@@ -267,6 +268,7 @@ export function sanitizeSettings(settings: AppSettings): AppSettings {
   clean.ui.language = clean.ui.language === 'en' ? 'en' : 'fr';
   clean.ui.theme = clean.ui.theme === 'light' ? 'light' : 'dark';
   clean.ui.dismissedUpdateVersion = String(clean.ui.dismissedUpdateVersion ?? '').trim();
+  clean.ui.lastSeenUpdate = String(clean.ui.lastSeenUpdate ?? '').trim();
   clean.ui.lockHash = String(clean.ui.lockHash ?? '').trim();
   clean.ui.lockSalt = String(clean.ui.lockSalt ?? '').trim();
   clean.ui.lockHint = String(clean.ui.lockHint ?? '').trim();

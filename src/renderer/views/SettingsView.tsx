@@ -18,6 +18,7 @@ interface Draft {
   theme: AppSettings['ui']['theme'];
   /** Conservees telles quelles : elles ne sont pas modifiees par ce formulaire. */
   dismissedUpdateVersion: string;
+  lastSeenUpdate: string;
   urlsExpandedByDefault: boolean;
   obsTutorialOpen: boolean;
   onboardingDone: boolean;
@@ -43,6 +44,7 @@ function toDraft(settings: AppSettings): Draft {
     language: settings.ui.language,
     theme: settings.ui.theme,
     dismissedUpdateVersion: settings.ui.dismissedUpdateVersion,
+    lastSeenUpdate: settings.ui.lastSeenUpdate,
     urlsExpandedByDefault: settings.ui.urlsExpandedByDefault,
     obsTutorialOpen: settings.ui.obsTutorialOpen,
     onboardingDone: settings.ui.onboardingDone,
@@ -209,6 +211,7 @@ export function SettingsView({ sc, onOpenLock }: { sc: StreamControl; onOpenLock
         language: draft.language,
         theme: draft.theme,
         dismissedUpdateVersion: draft.dismissedUpdateVersion,
+        lastSeenUpdate: draft.lastSeenUpdate,
         urlsExpandedByDefault: draft.urlsExpandedByDefault,
         obsTutorialOpen: draft.obsTutorialOpen,
         onboardingDone: draft.onboardingDone,

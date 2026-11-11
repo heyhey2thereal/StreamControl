@@ -16,8 +16,17 @@ export function LockDialog({ sc, onClose }: { sc: StreamControl; onClose: () => 
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Le champ mot de passe prend le focus UNE fois, a l'ouverture.
+  //
+  // Sans cette separation, l'effet dependait de `onClose` : comme l'application
+  // se redessine regulierement (etat des flux), une nouvelle fonction `onClose`
+  // relancait l'effet a chaque fois, et le focus revenait sans arret sur le
+  // champ mot de passe — impossible de saisir l'indice.
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
