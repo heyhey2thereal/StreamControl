@@ -4,6 +4,23 @@ Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 (le tag `v2.0.2` pointe dessus).
 
 ## 0. Deuxieme passe de correctifs (cette session)
+- **Replay : l'apercu ne se coupe plus au milieu.** Pour une selection de 10 s,
+  le lecteur allait jusqu'a ~7 s puis repartait en arriere : la duree annoncee
+  comptait le segment en cours d'ecriture, que le clip ne contenait pas encore.
+  La duree disponible et le clip se construisent desormais sur les **memes
+  segments** (tous sauf le dernier), et le clip se recharge tout seul quand la
+  selection reclame plus de video qu'il n'en contient.
+- **Macros : nouveau groupe Replay et nouveaux blocs.** Blocs ajoutes :
+  *Replay d'une plage precise* (`replay-range`), *Vider la memoire du replay*
+  (`clear-replay`), *Ouvrir le dossier des replays* (`open-replay-folder`),
+  *Ouvrir le dossier des enregistrements* (`open-recording-folder`), *Ouvrir la
+  fenetre de lecture* (`open-stream-window`), *Fermer la fenetre de lecture*
+  (`close-stream-window`), *Afficher un flux dans la scene OBS* (`show-stream`),
+  *Lancer une autre macro* (`run-macro`), *Requete HTTP POST* (`http-post`).
+- **Macros : quatre nouveaux modeles.** *Replay instantane*, *Replay de tous les
+  angles*, *Replay : plage et nettoyage*, *Enchainement de macros*.
+- **Nouvelle variable `{flux_memoire_replay}`** : duree de replay memorisee pour
+  un flux, en secondes.
 - **Compatibilite MediaMTX.** Le drapeau de validation `--validate-conf`
   n'existe pas dans la version livree (elle utilise `--validate-conf=chemin`) :
   l'appel avec un espace faisait echouer TOUS les demarrages. La validation se

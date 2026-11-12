@@ -72,8 +72,18 @@ export interface AutomationTargets {
   setStreamRecording: (streamId: string, record: boolean) => Promise<void>;
   /** Sauvegarde le tampon de replay d'un flux. */
   saveReplay: (streamId: string) => Promise<void>;
+  /** Sauvegarde une plage precise du tampon d'un flux. */
+  saveReplayRange: (streamId: string, fromSeconds: number, toSeconds: number) => Promise<void>;
   /** Sauvegarde le replay de tous les flux en direct. */
   saveReplayAll: () => Promise<number>;
+  /** Vide le tampon de replay d'un flux. */
+  clearReplayBuffer: (streamId: string) => Promise<void>;
+  /** Ouvre la fenetre de lecture d'un flux. */
+  openStreamWindow: (streamId: string) => Promise<void>;
+  /** Ferme la fenetre de lecture d'un flux. */
+  closeStreamWindow: (streamId: string) => Promise<void>;
+  /** Affiche un flux dans la scene courante d'OBS, en plein cadre. */
+  showStreamInScene: (streamId: string) => Promise<void>;
   /** Active ou desactive une adresse de diffusion. */
   setStreamEnabled: (streamId: string, enabled: boolean) => Promise<void>;
   /** Cree une adresse de diffusion. */
@@ -127,10 +137,18 @@ export interface AutomationTargets {
   playSound: (filePath: string, volume?: number) => Promise<void>;
   /** Ouvre un dossier dans l'explorateur de fichiers. */
   openFolder: (target: string) => Promise<void>;
+  /** Ouvre le dossier des replays. */
+  openReplayFolder: () => Promise<void>;
+  /** Ouvre le dossier des enregistrements. */
+  openRecordingFolder: () => Promise<void>;
   /** Ouvre une adresse dans le navigateur par defaut. */
   openUrl: (url: string) => Promise<void>;
   /** Envoie une requete HTTP (GET), pour piloter un service externe. */
   httpGet: (url: string) => Promise<{ ok: boolean; message?: string }>;
+  /** Envoie une requete HTTP (POST) avec un corps, pour piloter un service. */
+  httpPost: (url: string, body: string, contentType?: string) => Promise<{ ok: boolean; message?: string }>;
+  /** Lance une autre macro (chainage). Renvoie faux si elle est inconnue. */
+  runMacro: (macroId: string) => Promise<boolean>;
   /**
    * Contexte des variables, lu au moment ou la macro s'execute.
    *
@@ -204,6 +222,8 @@ const OBS_ACTIONS = new Set<MacroActionKind>([
   'mute-source',
   'unmute-source',
   'set-volume',
+  // Afficher un flux dans une scene passe par OBS.
+  'show-stream',
 ]);
 
 /**
@@ -748,6 +768,46 @@ export class Automation extends EventEmitter {
       case 'replay-all':
         await this.targets.saveReplayAll();
         break;
+      case 'replay-range':
+        // Plage comptee en secondes en arriere : `replayFrom` = debut (0 =
+        // direct), `replayTo` = fin. On borne pour eviter une demande absurde.
+        if (action.streamId) {
+          const from = Math.max(0, action.replayFrom ?? 30);
+          const to = Math.max(0, Math.min(action.replayTo ?? 0, from));
+          await this.targets.saveReplayRange(action.streamId, from, to);
+        }
+        break;
+      case 'clear-replay':
+        if (action.streamId) await this.targets.clearReplayBuffer(action.streamId);
+        break;
+      case 'open-stream-window':
+        if (action.streamId) await this.targets.openStreamWindow(action.streamId);
+        break;
+      case 'close-stream-window':
+        if (action.streamId) await this.targets.closeStreamWindow(action.streamId);
+        break;
+      case 'show-stream':
+        if (action.streamId) await this.targets.showStreamInScene(action.streamId);
+        break;
+      case 'open-replay-folder':
+        await this.targets.openReplayFolder();
+        break;
+      case 'open-recording-folder':
+        await this.targets.openRecordingFolder();
+        break;
+      case 'run-macro': {
+        if (!action.macroId) throw new Error('Choisissez la macro a lancer.');
+        const started = await this.targets.runMacro(action.macroId);
+        if (!started) throw new Error('Macro introuvable ou deja en cours.');
+        break;
+      }
+      case 'http-post': {
+        if (action.url) {
+          const result = await this.targets.httpPost(action.url, action.body ?? '', action.contentType);
+          if (!result.ok) throw new Error(result.message ?? 'Requete HTTP refusee.');
+        }
+        break;
+      }
       case 'enable-stream':
         if (action.streamId) await this.targets.setStreamEnabled(action.streamId, true);
         break;

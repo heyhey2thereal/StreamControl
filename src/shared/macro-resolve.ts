@@ -74,6 +74,7 @@ function streamValues(stream: MacroVariableStream | undefined): Record<string, s
     flux_publicateur: stream.publisher ?? '',
     flux_enregistrement: bool(stream.recording),
     flux_dossier_enregistrement: stream.recordingPath ?? '',
+    flux_memoire_replay: stream.replaySeconds === undefined ? '' : String(stream.replaySeconds),
     flux_url_rtmp: stream.urls?.rtmpIngest ?? '',
     flux_url_srt: stream.urls?.srtIngest ?? '',
     flux_url_rtsp: stream.urls?.rtspIngest ?? '',

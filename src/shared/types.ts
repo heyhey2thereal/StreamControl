@@ -299,31 +299,40 @@ export type MacroActionKind =
   | 'record-stream'
   | 'replay'
   | 'replay-all'
+  | 'replay-range'
+  | 'clear-replay'
   | 'create-stream'
   | 'delete-stream'
   | 'enable-stream'
   | 'disable-stream'
+  | 'open-stream-window'
+  | 'close-stream-window'
+  | 'show-stream'
   // --- Poste ---
   | 'lock'
   | 'restart-mediamtx'
   | 'start-mediamtx'
   | 'stop-mediamtx'
   | 'open-folder'
+  | 'open-replay-folder'
+  | 'open-recording-folder'
   | 'open-url'
   // --- Controle du deroulement ---
   | 'wait'
   | 'wait-until'
   | 'condition'
   | 'repeat'
+  | 'run-macro'
   | 'log'
   | 'notify'
   | 'popup'
   | 'sound'
   | 'stop-macro'
-  | 'http-request';
+  | 'http-request'
+  | 'http-post';
 
 /** Categorie d'une action, pour le regroupement dans l'editeur. */
-export type MacroActionGroup = 'obs' | 'flux' | 'poste' | 'controle' | 'alerte';
+export type MacroActionGroup = 'obs' | 'flux' | 'replay' | 'poste' | 'controle' | 'alerte';
 
 /** Une action d'une macro, avec ses parametres. */
 export interface MacroAction {
@@ -373,6 +382,22 @@ export interface MacroAction {
   url?: string;
   /** Duree maximale d'attente, en secondes, pour `wait-until`. */
   timeoutSeconds?: number;
+  /**
+   * Debut de la plage de replay, en secondes en arriere.
+   *
+   * Pour `replay-range` : 0 = la toute derniere seconde. Avec `replaySeconds`,
+   * on peut donc extraire « les 30 dernieres secondes » ou « de 60 s a 30 s en
+   * arriere ».
+   */
+  replayFrom?: number;
+  /** Fin de la plage de replay, en secondes en arriere (0 = direct). */
+  replayTo?: number;
+  /** Identifiant d'une autre macro a lancer, pour `run-macro`. */
+  macroId?: string;
+  /** Corps envoye par `http-post` (texte libre, variables acceptees). */
+  body?: string;
+  /** Type de contenu de `http-post`. Absent = `application/json`. */
+  contentType?: string;
   /**
    * Fichier de son a jouer, pour `sound`. Un chemin vide joue le son systeme
    * par defaut.
@@ -469,6 +494,8 @@ export interface MacroVariableStream {
   publisher?: string;
   recording?: boolean;
   recordingPath?: string;
+  /** Duree de replay memorisee pour ce flux, en secondes. */
+  replaySeconds?: number;
   urls?: EndpointUrls;
 }
 

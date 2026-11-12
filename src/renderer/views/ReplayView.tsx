@@ -43,6 +43,8 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
    */
   const [clip, setClip] = useState<{ url: string; seconds: number } | null>(null);
   const [clipNonce, setClipNonce] = useState(0);
+  /** Horodatage du dernier rechargement automatique, pour ne pas boucler. */
+  const lastClipRefresh = useRef(0);
   const barRef = useRef<HTMLDivElement>(null);
   const dragging = useRef<'start' | 'end' | 'select' | null>(null);
   /** Ecart entre le curseur et la poignee de debut, pour un deplacement fluide. */
@@ -152,6 +154,27 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   const previewTo = Math.max(previewFrom, clipSeconds - endAgo);
 
   const wanted = Math.max(0, startAgo - endAgo);
+
+  /**
+   * Recharge le clip quand la selection reclame plus de video qu'il n'en
+   * contient.
+   *
+   * Le clip est une photo figee du tampon ; la duree disponible, elle, continue
+   * d'augmenter au rythme du direct. Si l'operateur choisit une plage plus
+   * longue que le clip, l'apercu s'arretait a la fin du clip (7 s pour 10 s
+   * demandees) puis repartait en arriere. On prepare donc un clip plus long des
+   * que la selection le depasse — au plus une fois toutes les 3 s, pour ne pas
+   * relancer la lecture en boucle.
+   */
+  useEffect(() => {
+    if (!enabled || !clip) return;
+    // Ce que la selection reclame, ramene a la duree reellement disponible.
+    const needed = Math.min(startAgo, available);
+    if (needed <= clip.seconds + 0.5) return;
+    if (Date.now() - lastClipRefresh.current < 3000) return;
+    lastClipRefresh.current = Date.now();
+    setClipNonce((value) => value + 1);
+  }, [enabled, clip, startAgo, available]);
 
   /**
    * Convertit une position horizontale (0..1) en secondes « en arriere ».

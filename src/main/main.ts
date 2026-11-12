@@ -20,7 +20,7 @@ import { CHANNELS } from '../shared/channels';
 import type { AppSettings } from '../shared/types';
 import { resolveRecordingDir } from './recording';
 import { RecordingRepairer } from './recording-repair';
-import { replayBufferDir } from './replay';
+import { replayBufferDir, replayOutputDir } from './replay';
 import { resolveStorageDir } from './storage';
 import { readSoundFile } from './sound';
 import { buildVariableMap, expandText } from '../shared/macro-resolve';
@@ -231,6 +231,28 @@ const automation = new Automation(logger, settings, {
   saveReplay: async (streamId) => {
     await streams.saveReplay(streamId);
   },
+  saveReplayRange: async (streamId, fromSeconds, toSeconds) => {
+    const result = await streams.saveReplay(streamId, { fromSeconds, toSeconds });
+    // Un refus (plage trop courte, memoire insuffisante) doit arreter la macro
+    // avec sa raison, pas passer inapercu.
+    if (!result.ok) throw new Error(result.message);
+  },
+  clearReplayBuffer: async (streamId) => {
+    await streams.clearReplayBuffer(streamId);
+  },
+  openStreamWindow: async (streamId) => {
+    const opened = await streams.openViewerWindow(streamId);
+    if (!opened) throw new Error('Fenetre de lecture indisponible : MediaMTX est peut-etre arrete.');
+  },
+  closeStreamWindow: async (streamId) => {
+    streams.closeViewerWindow(streamId);
+  },
+  showStreamInScene: async (streamId) => {
+    const endpoint = streams.list().find((entry) => entry.id === streamId);
+    if (!endpoint) throw new Error('Adresse inconnue.');
+    const result = await obs.showStreamInScene(endpoint.name, endpoint.urls.embed);
+    if (!result.ok) throw new Error(result.message);
+  },
   createStream: async (name, path) => streams.create({ name, path }),
   deleteStream: async (streamId) => streams.remove(streamId),
   startMediamtx: async () => {
@@ -360,6 +382,18 @@ const automation = new Automation(logger, settings, {
     await mkdir(directory, { recursive: true }).catch(() => undefined);
     await shell.openPath(directory);
   },
+  openReplayFolder: async () => {
+    // Le dossier des replays est configurable : on ouvre celui reellement
+    // utilise, en le creant au besoin.
+    const directory = replayOutputDir(settings.get().replay.outputPath);
+    await mkdir(directory, { recursive: true }).catch(() => undefined);
+    await shell.openPath(directory);
+  },
+  openRecordingFolder: async () => {
+    const directory = resolveRecordingDir(settings.get().recording.path);
+    await mkdir(directory, { recursive: true }).catch(() => undefined);
+    await shell.openPath(directory);
+  },
   openUrl: async (url) => {
     await shell.openExternal(url);
   },
@@ -370,6 +404,27 @@ const automation = new Automation(logger, settings, {
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) };
     }
+  },
+  httpPost: async (url, body, contentType) => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': contentType?.trim() || 'application/json' },
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      return { ok: response.ok, message: response.ok ? undefined : `HTTP ${response.status}` };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  },
+  runMacro: async (macroId) => {
+    // Chainage : la macro appelee tourne independamment. On refuse une macro
+    // deja en cours pour ne pas la lancer deux fois en parallele.
+    const exists = settings.get().macros.some((macro) => macro.id === macroId);
+    if (!exists || automation.isRunning(macroId)) return false;
+    void automation.runMacro(macroId, 'trigger');
+    return true;
   },
   /**
    * Contexte des variables de macro, relu a chaque action.
@@ -401,6 +456,7 @@ const automation = new Automation(logger, settings, {
       publisher: endpoint.status.publisher,
       recording: endpoint.status.recording,
       recordingPath: endpoint.status.recordingPath,
+      replaySeconds: streams.replaySecondsFor(endpoint.id),
       urls: endpoint.urls,
     });
 

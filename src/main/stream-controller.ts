@@ -129,6 +129,16 @@ export class StreamController extends EventEmitter {
    * Voir capture.ts : c'est ce qui permet d'enregistrer ET de garder un tampon.
    */
   private readonly capture: CaptureManager;
+  /**
+   * Duree de replay memorisee par flux, en secondes.
+   *
+   * Cache alimente par la boucle d'interrogation : les variables de macro
+   * (`{flux_memoire_replay}`) doivent etre resolues de facon synchrone, alors
+   * que la lecture du tampon est une operation de disque.
+   */
+  private readonly replaySecondsCache = new Map<string, number>();
+  /** Compteur de cycles, pour rafraichir le cache moins souvent que l'etat. */
+  private pollTick = 0;
 
   constructor(options: StreamControllerOptions) {
     super();
@@ -283,7 +293,41 @@ export class StreamController extends EventEmitter {
 
     this.reportConnections(paths);
     this.reportUnknownPublishers(paths);
+    // Le cache des durees de replay suit le direct, mais sans relire le disque
+    // a chaque cycle (couteux). Toutes les 3 interrogations suffit : la valeur
+    // ne sert qu'a renseigner la variable `{flux_memoire_replay}`.
+    this.pollTick += 1;
+    if (this.settings.get().replay.enabled && this.pollTick % 3 === 0) {
+      void this.refreshReplaySeconds();
+    }
     this.emit('streams-refresh');
+  }
+
+  /**
+   * Met a jour le cache des durees de replay, pour chaque flux publie.
+   *
+   * On ne lit le tampon que des flux EN DIRECT : un flux arrete n'a pas de
+   * memoire utile, et lire son dossier a chaque cycle serait inutile.
+   */
+  private async refreshReplaySeconds(): Promise<void> {
+    const settings = this.settings.get();
+    for (const endpoint of this.registry.list()) {
+      if (!this.registry.getStatus(endpoint.id).publishing) {
+        this.replaySecondsCache.set(endpoint.id, 0);
+        continue;
+      }
+      try {
+        const state = await replayState(settings.replay.path, endpoint.path, settings.replay.minimumSeconds);
+        this.replaySecondsCache.set(endpoint.id, state.availableSeconds);
+      } catch {
+        // Tampon momentanement illisible : on garde la derniere valeur connue.
+      }
+    }
+  }
+
+  /** Duree de replay memorisee pour un flux, en secondes (lecture synchrone). */
+  replaySecondsFor(id: string): number {
+    return this.replaySecondsCache.get(id) ?? 0;
   }
 
   /**

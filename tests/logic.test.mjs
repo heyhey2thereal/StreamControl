@@ -316,6 +316,85 @@ test('les champs fichier et dossier des blocs survivent a la validation', () => 
   assert.equal(cleaned[1].text, '/tmp/enregistrements');
 });
 
+/**
+ * Les blocs de replay et les nouveaux blocs sont valides et conserves.
+ *
+ * Le defaut evite : ajouter un bloc sans son entree de validation faisait
+ * disparaitre les valeurs saisies a l'enregistrement. Ce test parcourt les
+ * nouveaux blocs, verifie que la plage de replay survit a la validation, et que
+ * le champ « macro » (lancer une macro) est bien une chaine.
+ */
+test('les blocs de replay et les nouveaux blocs sont valides', () => {
+  const { BLOCKS, blockFor } = require('../dist-electron/shared/macro-blocks.js');
+  const { sanitizeMacroActions } = require('../dist-electron/shared/macro-sanitize.js');
+
+  // Tous les blocs attendus sont presents.
+  for (const kind of [
+    'replay-range',
+    'clear-replay',
+    'open-replay-folder',
+    'open-recording-folder',
+    'open-stream-window',
+    'close-stream-window',
+    'show-stream',
+    'run-macro',
+    'http-post',
+  ]) {
+    assert.ok(blockFor(kind), `le bloc ${kind} doit exister`);
+  }
+
+  // La plage de replay survit a la validation, nombres compris (0 inclus).
+  const cleaned = sanitizeMacroActions([
+    { kind: 'replay-range', streamId: 'abc', replayFrom: 30, replayTo: 0 },
+    { kind: 'run-macro', macroId: 'macro-1' },
+    { kind: 'http-post', url: 'http://x/y', body: '{"a":1}', contentType: 'application/json' },
+    { kind: 'open-stream-window', streamId: 'abc' },
+  ]);
+  assert.equal(cleaned[0].replayFrom, 30, 'le debut de plage est conserve');
+  assert.equal(cleaned[0].replayTo, 0, 'la fin a 0 est conservee');
+  assert.equal(cleaned[1].macroId, 'macro-1', 'la macro visee est conservee');
+  assert.equal(cleaned[2].body, '{"a":1}', 'le corps POST est conserve');
+  assert.equal(cleaned[3].streamId, 'abc');
+
+  // Le groupe « replay » est declare.
+  const { BLOCK_GROUPS } = require('../dist-electron/shared/macro-blocks.js');
+  assert.ok(BLOCK_GROUPS.some((group) => group.id === 'replay'), 'le groupe replay doit exister');
+  // Le champ « macro » du bloc run-macro est de nature `macro`.
+  const runMacro = BLOCKS.find((block) => block.kind === 'run-macro');
+  assert.equal(runMacro.fields[0].kind, 'macro');
+});
+
+/**
+ * Les modeles de macro se construisent tous, y compris les nouveaux.
+ *
+ * Un modele qui reference un bloc inconnu produirait une macro inutilisable.
+ * On verifie aussi que les modeles de replay emploient les nouveaux blocs.
+ */
+test('les modeles de macro se construisent, replay compris', () => {
+  const { MACRO_TEMPLATES } = require('../dist-electron/shared/macro-templates.js');
+  const { blockFor } = require('../dist-electron/shared/macro-blocks.js');
+
+  const context = {
+    streams: [{ id: 's1', name: 'Camera', path: 'cam' }],
+    scenes: ['Programme', 'Secours'],
+  };
+
+  for (const template of MACRO_TEMPLATES) {
+    const actions = template.build(context);
+    assert.ok(Array.isArray(actions) && actions.length > 0, `le modele ${template.id} doit produire des actions`);
+    for (const action of actions) {
+      assert.ok(blockFor(action.kind), `le bloc ${action.kind} du modele ${template.id} doit exister`);
+    }
+  }
+
+  const replay = MACRO_TEMPLATES.find((template) => template.id === 'replay-instant');
+  assert.ok(replay, 'le modele replay-instant doit exister');
+  assert.ok(
+    replay.build(context).some((action) => action.kind === 'replay-range'),
+    'le modele replay doit utiliser le bloc de plage',
+  );
+});
+
 
 /**
  * Les variables de macro doivent se resoudre avec les donnees du moment.

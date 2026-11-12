@@ -163,6 +163,7 @@ export const MACRO_VARIABLES: MacroVariable[] = [
     boolean: true,
   },
   { token: 'flux_dossier_enregistrement', group: 'flux', sample: 'C:\\StreamControl\\records\\cam1', scopes: ['stream', 'alert'], perStream: true },
+  { token: 'flux_memoire_replay', group: 'flux', aliases: ['stream_replay_seconds'], sample: '60', scopes: ['stream', 'alert'], perStream: true, numeric: true },
   { token: 'flux_url_rtmp', group: 'flux', sample: 'rtmp://192.168.1.20:1935/studio/cam1', scopes: ['stream', 'alert'], perStream: true },
   { token: 'flux_url_srt', group: 'flux', sample: 'srt://192.168.1.20:8890?streamid=publish:studio/cam1', scopes: ['stream', 'alert'], perStream: true },
   { token: 'flux_url_rtsp', group: 'flux', sample: 'rtsp://192.168.1.20:8554/studio/cam1', scopes: ['stream', 'alert'], perStream: true },

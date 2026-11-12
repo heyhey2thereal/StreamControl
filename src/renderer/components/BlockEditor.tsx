@@ -12,6 +12,8 @@ interface EditorContext {
   sources: string[];
   /** Adresses de diffusion disponibles. */
   streams: Array<{ id: string; name: string; path: string }>;
+  /** Autres macros, proposees par le bloc « lancer une macro ». */
+  macros: Array<{ id: string; name: string }>;
 }
 
 /**
@@ -230,7 +232,23 @@ function Field({
       </select>
     );
   }
-
+  if (field.kind === 'macro') {
+    // Liste des autres macros, pour le bloc « lancer une macro ». Vide, on
+    // laisse un message : il n'y a rien a choisir.
+    if (context.macros.length === 0) {
+      return <div className="hint">{t('macro.noOtherMacro')}</div>;
+    }
+    return (
+      <select className="input" value={text} onChange={(e) => onChange({ macroId: e.target.value })}>
+        <option value="">{t('macro.pickMacro')}</option>
+        {context.macros.map((macro) => (
+          <option key={macro.id} value={macro.id}>
+            {macro.name}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (field.kind === 'condition') {
     // Etat predefini : c'est le repli du bloc condition, et le seul test du
     // bloc « attendre une condition ».

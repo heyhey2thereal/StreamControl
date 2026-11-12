@@ -37,6 +37,21 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 
 ## Corrections
 
+- **Replay : l'apercu ne se coupe plus au milieu.** Sur une selection de 10 s,
+  le lecteur allait jusqu'a environ 7 s puis repartait en arriere. La duree
+  annoncee comptait le segment en cours d'ecriture, que le clip ne contenait pas
+  encore. La duree disponible et le clip se construisent desormais sur les
+  **memes segments**, et le clip se recharge tout seul quand la selection
+  reclame plus de video qu'il n'en contient.
+
+- **Macros : nouveau groupe Replay et neuf nouveaux blocs.** Replay d'une plage
+  precise, vider la memoire du replay, ouvrir le dossier des replays, ouvrir le
+  dossier des enregistrements, ouvrir / fermer la fenetre de lecture, afficher
+  un flux dans la scene OBS, lancer une autre macro, requete HTTP POST. Quatre
+  nouveaux modeles : *Replay instantane*, *Replay de tous les angles*, *Replay :
+  plage et nettoyage*, *Enchainement de macros*. Nouvelle variable
+  `{flux_memoire_replay}`.
+
 - **Compatibilite MediaMTX.** Le demarrage echouait selon la version livree (le
   drapeau de validation interne n'existait pas sous cette forme). La validation
   se fait desormais en observant le demarrage reel, et le message d'erreur cite

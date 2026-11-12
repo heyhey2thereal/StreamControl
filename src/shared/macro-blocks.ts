@@ -22,6 +22,7 @@ export type BlockFieldKind =
   | 'scene'
   | 'source'
   | 'stream'
+  | 'macro'
   | 'text'
   | 'path'
   | 'file'
@@ -143,6 +144,7 @@ export const FIELD_LIMITS = {
 export const BLOCK_GROUPS: Array<{ id: MacroActionGroup; label: string; icon: string }> = [
   { id: 'obs', label: 'macro.group.obs', icon: 'obs' },
   { id: 'flux', label: 'macro.group.flux', icon: 'streams' },
+  { id: 'replay', label: 'macro.group.replay', icon: 'replay' },
   { id: 'poste', label: 'macro.group.poste', icon: 'settings' },
   { id: 'alerte', label: 'macro.group.alerte', icon: 'analysis' },
   { id: 'controle', label: 'macro.group.controle', icon: 'macros' },
@@ -276,6 +278,24 @@ export const BLOCKS: BlockDefinition[] = [
   },
   { kind: 'replay-all', group: 'flux', label: 'macro.kind.replayAll', fields: [] },
   {
+    kind: 'open-stream-window',
+    group: 'flux',
+    label: 'macro.kind.openStreamWindow',
+    fields: [{ key: 'streamId', label: 'macro.stream', kind: 'stream' }],
+  },
+  {
+    kind: 'close-stream-window',
+    group: 'flux',
+    label: 'macro.kind.closeStreamWindow',
+    fields: [{ key: 'streamId', label: 'macro.stream', kind: 'stream' }],
+  },
+  {
+    kind: 'show-stream',
+    group: 'flux',
+    label: 'macro.kind.showStream',
+    fields: [{ key: 'streamId', label: 'macro.stream', kind: 'stream' }],
+  },
+  {
     kind: 'create-stream',
     group: 'flux',
     label: 'macro.kind.createStream',
@@ -302,6 +322,25 @@ export const BLOCKS: BlockDefinition[] = [
     label: 'macro.kind.disableStream',
     fields: [{ key: 'streamId', label: 'macro.stream', kind: 'stream' }],
   },
+
+  // --- Replay ---------------------------------------------------------------
+  {
+    kind: 'replay-range',
+    group: 'replay',
+    label: 'macro.kind.replayRange',
+    fields: [
+      { key: 'streamId', label: 'macro.stream', kind: 'stream' },
+      { key: 'replayFrom', label: 'macro.replayFrom', kind: 'number', default: 30, min: 0, max: 3600, hint: 'macro.replayFromHint' },
+      { key: 'replayTo', label: 'macro.replayTo', kind: 'number', default: 0, min: 0, max: 3600, hint: 'macro.replayToHint' },
+    ],
+  },
+  {
+    kind: 'clear-replay',
+    group: 'replay',
+    label: 'macro.kind.clearReplay',
+    fields: [{ key: 'streamId', label: 'macro.stream', kind: 'stream' }],
+  },
+  { kind: 'open-replay-folder', group: 'replay', label: 'macro.kind.openReplayFolder', fields: [] },
 
   // --- Poste ---
   {
@@ -336,6 +375,7 @@ export const BLOCKS: BlockDefinition[] = [
       },
     ],
   },
+  { kind: 'open-recording-folder', group: 'poste', label: 'macro.kind.openRecordingFolder', fields: [] },
   {
     kind: 'open-url',
     group: 'poste',
@@ -461,6 +501,22 @@ export const BLOCKS: BlockDefinition[] = [
     group: 'controle',
     label: 'macro.kind.httpRequest',
     fields: [{ key: 'url', label: 'macro.url', kind: 'url', hint: 'macro.httpHint', maxLength: FIELD_LIMITS.url }],
+  },
+  {
+    kind: 'http-post',
+    group: 'controle',
+    label: 'macro.kind.httpPost',
+    fields: [
+      { key: 'url', label: 'macro.url', kind: 'url', hint: 'macro.httpPostHint', maxLength: FIELD_LIMITS.url },
+      { key: 'body', label: 'macro.httpBody', kind: 'text', multiline: true, maxLength: FIELD_LIMITS.message, hint: 'macro.httpBodyHint' },
+      { key: 'contentType', label: 'macro.httpContentType', kind: 'text', default: 'application/json', maxLength: FIELD_LIMITS.name },
+    ],
+  },
+  {
+    kind: 'run-macro',
+    group: 'controle',
+    label: 'macro.kind.runMacro',
+    fields: [{ key: 'macroId', label: 'macro.whichMacro', kind: 'macro', hint: 'macro.runMacroHint' }],
   },
   { kind: 'stop-macro', group: 'controle', label: 'macro.kind.stopMacro', fields: [] },
 ];

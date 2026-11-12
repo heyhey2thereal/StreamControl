@@ -75,8 +75,24 @@ export function StreamPreview({
         }
       }
     };
+    // Fin du media : on repart au debut de la plage. Sans cela, une plage qui
+    // depasse legerement la duree du clip s'arretait sur la derniere image au
+    // lieu de boucler (le lecteur semblait « se brider »).
+    const onEnded = () => {
+      const { from: start } = bounds.current;
+      try {
+        video.currentTime = start;
+      } catch {
+        // Ignore.
+      }
+      void video.play().catch(() => undefined);
+    };
     video.addEventListener('timeupdate', onTime);
-    return () => video.removeEventListener('timeupdate', onTime);
+    video.addEventListener('ended', onEnded);
+    return () => {
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('ended', onEnded);
+    };
   }, [src]);
 
   // Les bornes changent : on se replace si la lecture est sortie de la plage.

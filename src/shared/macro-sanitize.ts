@@ -25,6 +25,7 @@ function coerce(kind: string, raw: unknown): unknown {
     case 'scene':
     case 'source':
     case 'stream':
+    case 'macro':
     case 'text':
     case 'path':
     case 'file':

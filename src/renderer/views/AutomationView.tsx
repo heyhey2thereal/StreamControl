@@ -94,6 +94,11 @@ export function AutomationView({ sc }: { sc: StreamControl }) {
     scenes: sc.obs.scenes.map((scene) => scene.name),
     sources: sc.obs.sources ?? [],
     streams: sc.streams.map((stream) => ({ id: stream.id, name: stream.name, path: stream.path })),
+    // Les autres macros, pour le bloc « lancer une macro ». On exclut la macro
+    // en cours d'edition : se lancer soi-meme produirait une boucle.
+    macros: macros
+      .filter((macro) => macro.id !== selected)
+      .map((macro) => ({ id: macro.id, name: macro.name })),
   };
 
   const addMacro = async () => {

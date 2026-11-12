@@ -152,6 +152,21 @@ export async function segmentDurations(configured: string, streamPath: string): 
 }
 
 /**
+ * Segments reellement exploitables : tous sauf le dernier.
+ *
+ * MediaMTX ecrit le dernier segment en ce moment meme : le lire donnerait un
+ * fichier tronque, et sa duree n'est pas encore complete. C'est la seule liste
+ * qui sert a la fois a mesurer la memoire disponible ET a assembler un extrait.
+ * Les deux doivent partir du MEME ensemble, sinon l'interface annoncait plus de
+ * secondes que l'apercu n'en pouvait lire (l'apercu s'arretait avant la fin de
+ * la selection et repartait en arriere).
+ */
+export async function usableSegments(configured: string, streamPath: string): Promise<BufferSegment[]> {
+  const segments = await segmentDurations(configured, streamPath);
+  return segments.slice(0, -1);
+}
+
+/**
  * Selectionne les segments couvrant une plage, comptee depuis la fin du flux.
  *
  * @param segments segments du plus ancien au plus recent.
@@ -181,9 +196,15 @@ export function selectSegments(
   return selected;
 }
 
-/** Duree disponible dans le tampon, d'apres la duree reelle des segments. */
+/**
+ * Duree disponible dans le tampon, d'apres la duree reelle des segments.
+ *
+ * On ne compte QUE les segments clos (le dernier est en cours d'ecriture) :
+ * c'est exactement ce qu'un extrait pourra relire. Compter le segment en cours
+ * annoncait plus de secondes que l'apercu n'en lisait.
+ */
 export async function bufferSeconds(configured: string, streamPath: string): Promise<number> {
-  const segments = await segmentDurations(configured, streamPath);
+  const segments = await usableSegments(configured, streamPath);
   const total = segments.reduce((sum, segment) => sum + segment.seconds, 0);
   // Arrondi : la somme de durees flottantes donne sinon des valeurs du genre
   // 962.9999999999 s, que l'interface affiche telles quelles.
@@ -283,7 +304,9 @@ export async function planReplay(
   const bufferLimit = settings.replay.bufferSeconds;
   const minimum = settings.replay.minimumSeconds;
 
-  const segments = await segmentDurations(settings.replay.path, streamPath);
+  // Seuls les segments CLOS servent de reference, pour la duree disponible
+  // comme pour la selection : c'est exactement ce qu'un extrait peut relire.
+  const segments = await usableSegments(settings.replay.path, streamPath);
   const available = segments.reduce((sum, segment) => sum + segment.seconds, 0);
 
   if (segments.length === 0) {
@@ -329,12 +352,7 @@ export async function planReplay(
     };
   }
 
-  const usable = segments.slice(0, -1);
-  if (usable.length === 0) {
-    return { ok: false, selected: [], seconds: 0, message: 'Le flux vient de demarrer : patientez quelques secondes.' };
-  }
-
-  const selected = selectSegments(usable, from, to);
+  const selected = selectSegments(segments, from, to);
   if (selected.length === 0) {
     return { ok: false, selected: [], seconds: 0, message: 'La plage demandee est vide.' };
   }
@@ -406,9 +424,7 @@ export async function buildBufferClip(
   streamPath: string,
   logger: Logger,
 ): Promise<ReplayClip> {
-  const segments = await segmentDurations(settings.replay.path, streamPath);
-  // Le dernier segment est en cours d'ecriture : on l'ecarte.
-  const usable = segments.slice(0, -1);
+  const usable = await usableSegments(settings.replay.path, streamPath);
   if (usable.length === 0) return { ok: false, message: 'Le tampon est vide.' };
 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'streamcontrol-clip-'));
@@ -419,6 +435,8 @@ export async function buildBufferClip(
     logger.warn('replay', `Segments illisibles pour /${streamPath}.`);
     return { ok: false, message: 'Les segments memorises sont illisibles.' };
   }
+  // La duree du clip est la MEME somme que `bufferSeconds` : l'interface ne peut
+  // donc pas annoncer plus de secondes que l'apercu n'en lit.
   const seconds = Math.round(usable.reduce((sum, segment) => sum + segment.seconds, 0));
   return { ok: true, file: target, directory, seconds, message: `${seconds} s` };
 }

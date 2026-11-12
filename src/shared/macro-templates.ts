@@ -271,6 +271,94 @@ export const MACRO_TEMPLATES: MacroTemplate[] = [
       action('lock', { password: '' }),
     ],
   },
+  {
+    id: 'replay-instant',
+    label: 'tpl.replay-instant.label',
+    description: 'tpl.replay-instant.desc',
+    level: 'tpl.level.beginner',
+    icon: 'replay',
+    build: (context) => {
+      const stream = firstStream(context);
+      return [
+        action('log', { level: 'info', text: 'Extraction d un replay instantane de {flux_nom} ({flux_duree} de direct).' }),
+        action('replay-range', { streamId: stream?.id ?? '', replayFrom: 30, replayTo: 0 }),
+        action('wait', { seconds: 1 }),
+        action('open-replay-folder'),
+        action('notify', { text: 'Replay des 30 dernieres secondes sauvegarde dans {poste_dossier_replay}.' }),
+        action('log', { level: 'info', text: 'Replay termine a {heure_courte}.' }),
+      ];
+    },
+  },
+  {
+    id: 'replay-multi',
+    label: 'tpl.replay-multi.label',
+    description: 'tpl.replay-multi.desc',
+    level: 'tpl.level.intermediate',
+    icon: 'replay',
+    build: (context) => {
+      const stream = firstStream(context);
+      return [
+        action('log', { level: 'info', text: 'Replay de tous les angles : {nombre_flux_live} flux en direct.' }),
+        action('condition', {
+          condition: 'stream-live',
+          actions: [
+            action('replay-range', { streamId: stream?.id ?? '', replayFrom: 60, replayTo: 30 }),
+            action('wait', { seconds: 1 }),
+            action('replay-all'),
+          ],
+        }),
+        action('wait', { seconds: 2 }),
+        action('open-replay-folder'),
+        action('notify', { text: 'Extraits de 60 s a 30 s en arriere sauvegardes dans {poste_dossier_replay}.' }),
+      ];
+    },
+  },
+  {
+    id: 'replay-nettoyage',
+    label: 'tpl.replay-nettoyage.label',
+    description: 'tpl.replay-nettoyage.desc',
+    level: 'tpl.level.intermediate',
+    icon: 'replay',
+    build: (context) => {
+      const stream = firstStream(context);
+      return [
+        action('log', { level: 'info', text: 'Replay de la plage demandee pour {flux_nom}.' }),
+        action('replay-range', { streamId: stream?.id ?? '', replayFrom: 45, replayTo: 15 }),
+        action('wait', { seconds: 1 }),
+        action('open-stream-window', { streamId: stream?.id ?? '' }),
+        action('wait', { seconds: 2 }),
+        action('clear-replay', { streamId: stream?.id ?? '' }),
+        action('log', { level: 'info', text: 'Memoire du replay videe. Dossier : {poste_dossier_replay}.' }),
+        action('notify', { text: 'Plage extraite, fenetre ouverte et memoire videe.' }),
+      ];
+    },
+  },
+  {
+    id: 'enchainement-macros',
+    label: 'tpl.enchainement.label',
+    description: 'tpl.enchainement.desc',
+    level: 'tpl.level.advanced',
+    icon: 'macros',
+    build: (context) => {
+      const scene = sceneOr(firstScene(context), 'Programme');
+      const stream = firstStream(context);
+      return [
+        action('log', { level: 'info', text: 'Enchainement de macros par {macro_nom}.' }),
+        action('scene', { scene }),
+        action('wait', { seconds: 1 }),
+        action('open-stream-window', { streamId: stream?.id ?? '' }),
+        action('show-stream', { streamId: stream?.id ?? '' }),
+        action('wait', { seconds: 1 }),
+        action('open-recording-folder'),
+        action('http-post', {
+          url: 'http://127.0.0.1:8080/evenement',
+          body: '{"macro":"{macro_nom}","scene":"{obs_scene}","flux":"{flux_nom}","heure":"{heure_courte}"}',
+          contentType: 'application/json',
+        }),
+        action('notify', { text: 'Enchainement termine : scene {obs_scene}, fenetre de {flux_nom} ouverte.' }),
+      ];
+    },
+  },
 ];
 
 /** Retrouve un modele par son identifiant. */

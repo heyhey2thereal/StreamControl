@@ -214,6 +214,21 @@ try {
   check('le clip annonce les plages', clip.headers['accept-ranges'] === 'bytes', String(clip.headers['accept-ranges']));
   check('le clip est un MP4', String(clip.headers['content-type']).includes('video/mp4'), String(clip.headers['content-type']));
 
+  // Le clip du tampon doit couvrir TOUTE la memoire annoncee : sinon l'apercu
+  // s'arretait a la fin du clip (7 s pour 10 s demandees) puis repartait en
+  // arriere. C'est le defaut corrige : la duree disponible et le clip sont
+  // desormais construits sur les MEMES segments (tous sauf le dernier).
+  const newClip = await request(`${clipUrl}/new`);
+  const clipInfo = JSON.parse(newClip.body);
+  const availNow = await cdp.evaluate(
+    `window.streamcontrol.replayAvailable(${JSON.stringify(target.id)}).then((r) => r.seconds)`,
+  );
+  check(
+    'le clip couvre toute la memoire disponible',
+    clipInfo.ok === true && clipInfo.seconds >= availNow - 1,
+    `clip ${clipInfo.seconds} s vs disponible ${availNow} s`,
+  );
+
   // Sens de la timeline : le direct est a GAUCHE, le plus ancien a DROITE.
   // La tete de lecture (bord du remplissage) doit donc etre pres du bord gauche
   // tant que la memoire n'est pas pleine.
