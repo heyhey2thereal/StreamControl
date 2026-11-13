@@ -118,9 +118,11 @@ export interface BufferSegment {
 /**
  * Duree d'un segment, en secondes.
  *
- * On lit l'en-tete du fichier (jamais tout le fichier : un segment peut peser
- * plusieurs Mo) et on demande sa duree reelle a `fmp4SegmentSeconds`. Un ancien
- * segment `.ts`, ou un fichier tronque, retombe sur la duree supposee.
+ * La duree vient de l'en-tete (`mvhd`), qui se lit dans les premiers octets :
+ * on ne charge donc qu'un debut de fichier, jamais un segment entier (qui peut
+ * peser plusieurs Mo). Si cet en-tete ne la renseigne pas (muxeur inhabituel),
+ * on relit le fichier entier avant de retomber sur la duree supposee. Un ancien
+ * segment `.ts` n'a pas d'en-tete fMP4 : il garde la duree supposee.
  */
 async function segmentDuration(file: string): Promise<number> {
   try {
@@ -130,8 +132,16 @@ async function segmentDuration(file: string): Promise<number> {
       const length = Math.min(size, SEGMENT_HEAD_BYTES);
       const head = Buffer.alloc(length);
       await handle.read(head, 0, length, 0);
-      const seconds = fmp4SegmentSeconds(head);
-      return seconds > 0 ? seconds : BUFFER_SEGMENT_SECONDS;
+      const fromHead = fmp4SegmentSeconds(head);
+      if (fromHead > 0) return fromHead;
+      // L'en-tete n'etait pas dans les premiers octets : on relit tout.
+      if (size > length && file.endsWith('.mp4')) {
+        const whole = Buffer.alloc(size);
+        await handle.read(whole, 0, size, 0);
+        const fromWhole = fmp4SegmentSeconds(whole);
+        if (fromWhole > 0) return fromWhole;
+      }
+      return BUFFER_SEGMENT_SECONDS;
     } finally {
       await handle.close();
     }
@@ -236,6 +246,45 @@ export async function clearReplayBuffer(configured: string, streamPath: string):
     }
   } catch {
     // Dossier absent : rien a vider.
+  }
+  return removed;
+}
+
+/**
+ * Supprime les segments du tampon anterieurs a un instant donne.
+ *
+ * Le tampon doit refleter la publication EN COURS. Or MediaMTX ne purge un
+ * segment qu'apres `recordDeleteAfter` : quand un flux s'arrete puis republie,
+ * les segments de la publication precedente restent sur le disque et gonflent
+ * la duree annoncee (un flux publie depuis 31 s annoncait ainsi 59 s). On
+ * ecarte donc, a la reprise de la publication, tout segment ecrit avant elle.
+ *
+ * @param since horodatage (ms) du debut de la publication courante.
+ * @returns le nombre de segments supprimes.
+ */
+export async function pruneReplayBufferBefore(
+  configured: string,
+  streamPath: string,
+  since: number,
+): Promise<number> {
+  const dir = path.join(replayBufferDir(configured), streamPath);
+  let removed = 0;
+  try {
+    for (const name of await fs.readdir(dir)) {
+      if (!name.endsWith('.mp4') && !name.endsWith('.ts')) continue;
+      const file = path.join(dir, name);
+      try {
+        const stat = await fs.stat(file);
+        if (stat.mtimeMs < since) {
+          await fs.rm(file, { force: true });
+          removed += 1;
+        }
+      } catch {
+        // Segment disparu entre-temps : rien a faire.
+      }
+    }
+  } catch {
+    // Dossier absent : rien a purger.
   }
   return removed;
 }

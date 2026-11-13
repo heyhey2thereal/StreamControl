@@ -3,7 +3,31 @@
 Correctifs et nouveautés, par-dessus la 2.0.1. Branche de travail : `v2.0.0`
 (le tag `v2.0.2` pointe dessus).
 
-## 0. Deuxieme passe de correctifs (cette session)
+## 0 bis. Troisieme passe de correctifs (cette session)
+- **Replay : la duree annoncee est enfin juste.** La duree d'un segment etait
+  calculee en lisant seulement ses 256 premiers Ko et en sommant les `trun` :
+  un segment de 2 s n'etait compte que pour 1,2 s. Resultat : une memoire
+  annoncee tres en dessous de la realite, et un lecteur d'apercu dont la duree
+  ne correspondait a rien (« 0:00 / 0:59 » pour un flux de 31 s). La duree est
+  desormais lue dans l'en-tete `mvhd`, qui donne la valeur exacte du segment.
+- **Replay : l'apercu et la pellicule fonctionnent.** Le serveur de pages ne
+  renvoyait aucun en-tete `Access-Control-Allow-Origin` : depuis l'application
+  Electron (origine `file://`), `fetch` et la lecture du clip etaient bloques.
+  L'apercu restait vide et la pellicule ne se dessinait pas.
+- **Replay : la poignee de debut n'est plus bloquee.** La borne des poignees
+  valait `max(memoire disponible, minimum)` : des que le flux avait moins de
+  memoire que le minimum, la poignee de debut etait ramenee a cette valeur et
+  l'operateur ne pouvait plus choisir une plage plus ancienne (« en dessous de
+  12, il me remet sur 12 »). La borne est desormais la duree reellement
+  memorisee.
+- **Replay : plus de duree fantome apres un redemarrage.** Apres un arret puis
+  une reprise, MediaMTX ne purge les anciens segments qu'au bout de la duree de
+  memoire : ils gonflaient la duree annoncee (un flux publie depuis 31 s
+  annoncait 59 s). Les segments de la publication precedente sont maintenant
+  ecartes a la reprise, et le tampon est vide au demarrage de l'application.
+- Chiffres : **52 unitaires · 529 e2e · 0 echec.**
+
+## 0. Deuxieme passe de correctifs (session precedente)
 - **Replay : l'apercu ne se coupe plus au milieu.** Pour une selection de 10 s,
   le lecteur allait jusqu'a ~7 s puis repartait en arriere : la duree annoncee
   comptait le segment en cours d'ecriture, que le clip ne contenait pas encore.

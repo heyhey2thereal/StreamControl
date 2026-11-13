@@ -120,10 +120,12 @@ export function ReplayView({ sc }: { sc: StreamControl }) {
   // (apres une reinstallation) peut annoncer plus que la memoire, ce qui
   // remplirait la barre au-dela de 100 %.
   const available = Math.min(selectedState?.availableSeconds ?? 0, memory);
-  // On ne peut pas demander plus que ce qui est reellement memorise : sans ce
-  // plafond, « un replay de 300 s » etait accepte alors que le flux n'avait que
-  // 32 s, et l'extrait etait plus court que voulu.
-  const reachable = Math.max(available, minimum);
+  // On ne peut pas demander plus que ce qui est reellement memorise : c'est ce
+  // qui borne les poignees. On ne prend PAS le minimum configure : le prendre
+  // forcerait la poignee de debut a cette valeur des que la memoire est plus
+  // courte, et l'operateur ne pouvait plus choisir une plage plus ancienne que
+  // le minimum — il la voyait « revenir » a cette valeur.
+  const reachable = available;
 
   // Le plus ANCIEN est a DROITE, le plus RECENT (le direct) a GAUCHE. La
   // memoire s'etend donc du direct (a gauche) vers la droite a mesure que le

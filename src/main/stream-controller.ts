@@ -26,7 +26,7 @@ import type {
 import type { Logger } from './logger';
 import { describePublisher, type MediamtxManager, type MediamtxPathState } from './mediamtx-manager';
 import { buildPathOptions, resolveRecordingDir } from './recording';
-import { replayPathOptions, saveReplay, buildReplay, buildBufferClip, replayState, clearReplayBuffer, replayBufferDir, type SaveReplayOptions, type ReplayBuild, type ReplayClip } from './replay';
+import { replayPathOptions, saveReplay, buildReplay, buildBufferClip, replayState, clearReplayBuffer, replayBufferDir, pruneReplayBufferBefore, type SaveReplayOptions, type ReplayBuild, type ReplayClip } from './replay';
 import { CaptureManager } from './capture';
 import type { NetworkInfo } from '../shared/types';
 import type { SettingsStore } from './settings';
@@ -125,6 +125,19 @@ export class StreamController extends EventEmitter {
   /** Chemins actuellement publies, pour detecter les connexions. */
   private readonly connected = new Set<string>();
   /**
+   * Instant (ms) de la derniere deconnexion, par chemin.
+   *
+   * Sert a purger le tampon a la reprise : les segments ecrits AVANT cette
+   * deconnexion appartiennent a la publication precedente, et MediaMTX ne les
+   * efface qu'apres `recordDeleteAfter`. Les prendre pour la publication
+   * courante gonflait la duree annoncee (31 s reels annonces comme 59 s).
+   *
+   * On retient l'instant de la DECONNEXION, et non de la reprise : le premier
+   * segment de la nouvelle publication peut etre ecrit avant que le cycle
+   * d'interrogation ne constate la reprise, et serait alors efface a tort.
+   */
+  private readonly disconnectedAt = new Map<string, number>();
+  /**
    * Capture des flux quand le replay occupe le reglage `record` de MediaMTX.
    * Voir capture.ts : c'est ce qui permet d'enregistrer ET de garder un tampon.
    */
@@ -188,7 +201,30 @@ export class StreamController extends EventEmitter {
     // liste reelle des adresses.
     void this.pruneOrphanReplayBuffers();
 
+    // Les segments d'une session precedente sont perimes : ils fausseraient la
+    // duree annoncee pour la premiere publication. MediaMTX n'a pas encore
+    // demarre, on repart donc d'un tampon vide.
+    if (current.replay.enabled) await this.clearAllReplayBuffers();
+
     this.startPolling();
+  }
+
+  /**
+   * Vide le tampon de replay de TOUTES les adresses.
+   *
+   * Au demarrage de l'application, les segments laisses par la session
+   * precedente ne correspondent plus a aucun direct : les compter donnerait une
+   * memoire fantome. On repart d'un tampon vide.
+   */
+  private async clearAllReplayBuffers(): Promise<void> {
+    try {
+      const settings = this.settings.get();
+      for (const endpoint of this.registry.list()) {
+        await clearReplayBuffer(settings.replay.path, endpoint.path);
+      }
+    } catch {
+      // Dossier absent, ou illisible : sans consequence au demarrage.
+    }
   }
 
   /**
@@ -350,6 +386,20 @@ export class StreamController extends EventEmitter {
 
       if (connected) {
         this.connected.add(entry.name);
+        // Une NOUVELLE publication commence : le tampon ne doit refleter
+        // qu'elle. Les segments de la publication precedente restent sinon sur
+        // le disque (MediaMTX ne les purge qu'apres `recordDeleteAfter`) et
+        // gonflent la duree annoncee — un flux publie depuis 31 s annoncait
+        // ainsi 59 s. On efface tout ce qui a ete ecrit avant la deconnexion.
+        const since = this.disconnectedAt.get(entry.name);
+        if (since !== undefined && this.settings.get().replay.enabled) {
+          void pruneReplayBufferBefore(this.settings.get().replay.path, endpoint.path, since);
+          // La duree memorisee repart de zero : la valeur en cache decrivait la
+          // publication precedente, et l'interface l'affichait encore un
+          // instant apres la reprise.
+          this.replaySecondsCache.set(endpoint.id, 0);
+        }
+        this.disconnectedAt.delete(entry.name);
         const who = describePublisher(entry.userAgent);
         const where = entry.remoteAddr ? ` (${entry.remoteAddr.split(':')[0]})` : '';
         const dimensions =
@@ -368,6 +418,9 @@ export class StreamController extends EventEmitter {
         });
       } else {
         this.connected.delete(entry.name);
+        // On retient l'instant de la deconnexion : il borne la publication
+        // precedente, dont les segments seront purges a la reprise.
+        this.disconnectedAt.set(entry.name, Date.now());
         const who = describePublisher(entry.userAgent);
         this.logger.info('streams', `${who} s'est deconnecte de "${endpoint.name}".`);
         this.emit('device-disconnected', { path: endpoint.path, name: endpoint.name, device: who });

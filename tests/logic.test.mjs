@@ -1078,6 +1078,80 @@ test('la duree d un segment fMP4 est lue depuis mdhd et trun', () => {
 });
 
 /**
+ * La duree d'un segment fMP4 est lue depuis l'en-tete `mvhd`, exact et complet.
+ *
+ * Le defaut corrige : la duree etait calculee en sommant les `trun`, qui vivent
+ * dans les fragments au fil du fichier. Un en-tete de fichier tronque (lecture
+ * des 256 premiers Ko) ne voyait que les premiers fragments : un segment de 2 s
+ * n'etait compte que pour 1,2 s, et la memoire annoncee etait tres en dessous
+ * de la realite (un flux publie depuis 31 s annoncait 59 s de memoire, ou
+ * l'inverse selon les cas).
+ */
+test('la duree d un segment fMP4 vient de l en-tete mvhd', () => {
+  const { fmp4HeaderSeconds, fmp4SegmentSeconds } = require('../dist-electron/main/fmp4.js');
+
+  const box = (type, body) => {
+    const buffer = Buffer.alloc(8 + body.length);
+    buffer.writeUInt32BE(8 + body.length, 0);
+    buffer.write(type, 4, 'latin1');
+    body.copy(buffer, 8);
+    return buffer;
+  };
+
+  // mvhd version 0 : version+flags (4) + dates (8) + timescale (4) + duration (4).
+  const mvhd = (timescale, duration) => {
+    const body = Buffer.alloc(4 + 8 + 4 + 4);
+    body.writeUInt32BE(timescale, 12);
+    body.writeUInt32BE(duration, 16);
+    return box('mvhd', body);
+  };
+  const moov = (timescale, duration) => box('moov', mvhd(timescale, duration));
+
+  // Un en-tete seul, sans aucun fragment : la duree reste lisible.
+  const headerOnly = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), moov(1000, 2000)]);
+  assert.ok(Math.abs(fmp4HeaderSeconds(headerOnly) - 2) < 1e-6, `2 s attendues, obtenue ${fmp4HeaderSeconds(headerOnly)}`);
+  assert.ok(Math.abs(fmp4SegmentSeconds(headerOnly) - 2) < 1e-6, 'la duree du segment suit l en-tete');
+
+  // Le `moov` peut suivre des fragments (fichier ou l'en-tete n'est pas en tete).
+  const late = Buffer.concat([box('ftyp', Buffer.alloc(8, 0)), box('mdat', Buffer.alloc(16)), moov(1000, 3500)]);
+  assert.ok(Math.abs(fmp4HeaderSeconds(late) - 3.5) < 1e-6, `3,5 s attendues, obtenue ${fmp4HeaderSeconds(late)}`);
+
+  // Sans `mvhd` (en-tete inconnu), la fonction ne doit rien inventer.
+  assert.equal(fmp4HeaderSeconds(box('moov', Buffer.alloc(12, 0))), 0);
+});
+
+/**
+ * Le tampon de replay ne garde pas les segments de la publication precedente.
+ *
+ * Le defaut corrige : apres un arret puis une reprise, MediaMTX ne purge les
+ * anciens segments qu'au bout de `recordDeleteAfter`. Ils restaient donc sur le
+ * disque et gonflaient la duree annoncee (un flux publie depuis 31 s annoncait
+ * 59 s). On efface, a la reprise, tout segment ecrit avant elle.
+ */
+test('le tampon ecarte les segments de la publication precedente', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { pruneReplayBufferBefore } = require('../dist-electron/main/replay.js');
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-prune-'));
+  const dir = path.join(root, 'live');
+  fs.mkdirSync(dir, { recursive: true });
+  const old = path.join(dir, 'a.mp4');
+  const recent = path.join(dir, 'b.mp4');
+  fs.writeFileSync(old, 'x');
+  fs.writeFileSync(recent, 'y');
+  const past = Date.now() - 60_000;
+  fs.utimesSync(old, past / 1000, past / 1000);
+
+  const removed = await pruneReplayBufferBefore(root, 'live', Date.now() - 10_000);
+  assert.equal(removed, 1, 'un ancien segment est supprime');
+  assert.equal(fs.existsSync(old), false, 'le segment ancien a disparu');
+  assert.equal(fs.existsSync(recent), true, 'le segment recent est conserve');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+/**
  * La selection d'une plage de replay s'appuie sur la duree reelle des segments.
  *
  * On verifie qu'une plage « des 30 dernieres secondes » retient bien les

@@ -324,6 +324,11 @@ export class WebPagesServer {
 
   private handle(request: http.IncomingMessage, response: ServerResponse): void {
     response.setHeader('Cache-Control', 'no-store');
+    // Les pages du poste (apercu, pellicule du replay) interrogent ce serveur
+    // depuis l'application Electron (origine `file://`). Sans cet en-tete, le
+    // navigateur bloque `fetch` et la lecture `crossOrigin` du clip : l'apercu
+    // restait vide et la pellicule ne se dessinait pas.
+    response.setHeader('Access-Control-Allow-Origin', '*');
 
     let url: URL;
     try {

@@ -37,6 +37,27 @@ Disponible sur **Windows**, **macOS** et **Linux**.
 
 ## Corrections
 
+- **Replay : la durée annoncée est enfin juste.** La durée d'un segment était
+  calculée sur ses seuls 256 premiers Ko : un segment de 2 s n'était compté que
+  pour 1,2 s. La mémoire annoncée était donc très en dessous de la réalité, et
+  le lecteur d'aperçu affichait une durée sans rapport (« 0:00 / 0:59 » pour un
+  flux de 31 s). La durée est désormais lue dans l'en-tête du fichier, qui donne
+  la valeur exacte.
+
+- **Replay : l'aperçu et la pellicule s'affichent.** Une autorisation manquante
+  empêchait l'application de lire le clip du tampon : l'aperçu restait vide et
+  la pellicule ne se dessinait pas. C'est corrigé.
+
+- **Replay : la poignée de début n'est plus bloquée.** La poignée ne pouvait pas
+  descendre sous la durée minimale configurée dès que le flux avait moins de
+  mémoire que ce minimum (« en dessous de 12, il me remet sur 12 »). La borne
+  est désormais la durée réellement mémorisée.
+
+- **Replay : plus de durée fantôme après un redémarrage.** Après un arrêt puis
+  une reprise, les segments de la publication précédente gonflaient la durée
+  annoncée (un flux publié depuis 31 s annonçait 59 s). Ils sont maintenant
+  écartés à la reprise, et le tampon repart vide au démarrage de l'application.
+
 - **Replay : l'apercu ne se coupe plus au milieu.** Sur une selection de 10 s,
   le lecteur allait jusqu'a environ 7 s puis repartait en arriere. La duree
   annoncee comptait le segment en cours d'ecriture, que le clip ne contenait pas

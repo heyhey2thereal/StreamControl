@@ -229,6 +229,47 @@ try {
     `clip ${clipInfo.seconds} s vs disponible ${availNow} s`,
   );
 
+  // Le clip est interroge par la page Electron (origine `file://`) : sans
+  // `Access-Control-Allow-Origin`, `fetch` etait bloque et l'apercu restait
+  // vide. On verifie l'en-tete et que la duree annoncee par le lecteur
+  // correspond bien a la memoire (et non a une valeur fausse).
+  check(
+    'le clip autorise les requetes cross-origin',
+    String(clip.headers['access-control-allow-origin']) === '*',
+    String(clip.headers['access-control-allow-origin']),
+  );
+  const previewDuration = await cdp.evaluate(`(() => {
+    const v = document.querySelector('.replay-preview video');
+    return v ? v.duration : -1;
+  })()`);
+  check(
+    'la duree du lecteur correspond a la memoire disponible',
+    Number.isFinite(previewDuration) && previewDuration >= availNow - 1.5,
+    `lecteur ${previewDuration} s vs disponible ${availNow} s`,
+  );
+
+  // La poignee de debut doit pouvoir descendre BAS : la borne est la duree
+  // reellement memorisee, jamais le minimum configure (le defaut corrige
+  // ramenait la poignee a cette valeur et l'operateur ne pouvait plus choisir
+  // une plage plus ancienne).
+  await cdp.evaluate(`(() => {
+    const bar = document.querySelector('.replay-bar');
+    const handle = document.querySelectorAll('.replay-handle')[0];
+    const rect = bar.getBoundingClientRect();
+    handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: rect.left + rect.width * 0.5, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: rect.left + rect.width * 0.02, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  })()`);
+  await sleep(300);
+  const lowStart = await cdp.evaluate(
+    `parseInt(document.querySelectorAll('.replay-handle-label')[0]?.textContent ?? '999', 10)`,
+  );
+  check(
+    'la poignee de debut descend sous le minimum',
+    Number.isFinite(lowStart) && lowStart < 5,
+    `${lowStart} s (disponible ${availNow} s, minimum 5 s)`,
+  );
+
   // Sens de la timeline : le direct est a GAUCHE, le plus ancien a DROITE.
   // La tete de lecture (bord du remplissage) doit donc etre pres du bord gauche
   // tant que la memoire n'est pas pleine.

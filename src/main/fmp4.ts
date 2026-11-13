@@ -348,6 +348,12 @@ export function fmp4SegmentSeconds(segment: Buffer): number {
   const moov = findBox(segment, 'moov');
   if (!moov) return 0;
 
+  // La duree portee par l'en-tete (`mvhd`) est EXACTE et se lit dans les
+  // premiers octets : elle couvre tout le segment, alors que les `trun` se
+  // lisent au fil des fragments. On la prefere quand elle est renseignee.
+  const headerSeconds = fmp4HeaderSeconds(segment);
+  if (headerSeconds > 0) return headerSeconds;
+
   // Base de temps par piste : identifiant -> timescale.
   const timescales = new Map<number, number>();
   for (const trak of childBoxes(segment, moov)) {
@@ -384,6 +390,40 @@ export function fmp4SegmentSeconds(segment: Buffer): number {
     if (duration > seconds) seconds = duration;
   }
   return seconds;
+}
+
+/**
+ * Duree annoncee par l'en-tete (`mvhd`) d'un segment fMP4, en secondes.
+ *
+ * MediaMTX renseigne `mvhd` avec la duree EXACTE du segment. C'est bien plus
+ * fiable que de lire les `trun` : ces derniers vivent dans les fragments, au
+ * fil du fichier, si bien qu'un en-tete de fichier tronque (ou une lecture
+ * partielle) en sous-estimait la duree. Un segment de 2 s n'etait alors compte
+ * que pour 1,2 s, et la memoire annoncee (et la duree du clip d'apercu) etait
+ * tres en dessous de la realite.
+ *
+ * @returns la duree en secondes, ou 0 si l'en-tete ne la renseigne pas.
+ */
+export function fmp4HeaderSeconds(segment: Buffer): number {
+  const moov = findBox(segment, 'moov');
+  if (!moov) return 0;
+  const mvhd = findBox(segment, 'mvhd', moov.start + 8, moov.start + moov.size);
+  if (!mvhd) return 0;
+
+  const version = segment.readUInt8(mvhd.start + 8);
+  const dateSize = version === 1 ? 8 : 4;
+  // mvhd : en-tete (8) + version/flags (4) + dates + timescale (4) + duration.
+  const timescaleOffset = mvhd.start + 8 + 4 + 2 * dateSize;
+  const durationOffset = timescaleOffset + 4;
+  if (durationOffset + (version === 1 ? 8 : 4) > mvhd.start + mvhd.size) return 0;
+
+  const timescale = segment.readUInt32BE(timescaleOffset);
+  if (timescale <= 0) return 0;
+  const duration =
+    version === 1
+      ? Number(segment.readBigUInt64BE(durationOffset))
+      : segment.readUInt32BE(durationOffset);
+  return duration / timescale;
 }
 
 /**
